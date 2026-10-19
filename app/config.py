@@ -34,6 +34,16 @@ APP_ALIASES = {
     "my files": "file explorer",
 }
 
+# Your go-to app for each kind of job. The model uses these for vague requests
+# like "I want to write some code" or "I need to browse the internet".
+PREFERRED_APPS = {
+    "browsing the web": "Brave",
+    "writing code": "Visual Studio Code",
+    "Android development": "Android Studio",
+    "checking CPU or memory use": "Task Manager",
+    "changing display, Wi-Fi, Bluetooth or sound": "Settings",
+}
+
 # Apps that always exist on Windows, even if the Start menu scan misses them.
 BUILTIN_APPS = {
     "notepad": "notepad.exe",

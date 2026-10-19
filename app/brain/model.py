@@ -19,7 +19,9 @@ from app import config
 _THINK_TAGS = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 BASE_PROMPT = f"""You are {config.ASSISTANT_NAME}, a personal assistant running on the user's Windows 11 PC.
-Never say you did something unless a tool did it. Never invent tools."""
+Never say you did something unless a tool did it. Never invent tools.
+When the user wants to do one of these things, open the app named:
+""" + "\n".join(f"- {job}: {app}" for job, app in config.PREFERRED_APPS.items())
 
 
 def _tool_lines(schemas: list[dict]) -> str:

@@ -35,7 +35,7 @@ CASES = [
     ("lock my pc",                                ("lock_pc",), None),
     ("could you bring up the calculator for me",  ("open_app",), "calc"),
     ("I want to write some code",                 ("open_app",), "code"),
-    ("I need to browse the internet",             ("open_app",), None),
+    ("I need to browse the internet",             ("open_app",), "brave"),
     ("find me tutorials on jetpack compose",      ("web_search",), "compose"),
     ("take me to youtube",                        ("open_url", "open_app"), "youtube"),
     ("what's today's date",                       ("get_time",), None),
