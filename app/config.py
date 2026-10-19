@@ -41,12 +41,12 @@ MAX_COMMAND_SECONDS = 10
 # --- Spoken replies (Kokoro, runs on the CPU) ------------------------------------
 SPEAK_REPLIES = True          # with --voice, Adeola says her replies out loud
 # Your own mix of Kokoro voices. Audition blends with: python -m tests.voice_lab
-VOICE_BLEND = "af_heart*0.5 + af_bella*0.3 + bf_emma*0.2"
-VOICE_SPEED = 1.0
+VOICE_BLEND = "af_heart*0.6 + bf_emma*0.4"
+VOICE_SPEED = 1
 TTS_MODEL = "kokoro-v1.0.fp16.onnx"   # fastest on CPU; the int8 file is ~4x slower
 MODELS_DIR = Path(__file__).resolve().parent.parent / "models"  # downloaded on first use
 # How to say words the voice gets wrong. Spelling is phonetic, tune it by ear.
-SPOKEN_FORMS = {"Adeola": "Ahdeh-ohla"}
+SPOKEN_FORMS = {"Adeola": "ah-DEE-oh-lah"}
 
 # --- Memory (Phase 3) -----------------------------------------------------------
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"   # stays on this PC, not in git
