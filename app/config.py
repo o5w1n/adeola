@@ -1,6 +1,7 @@
 """Adeola settings. Edit this file to customise names, aliases and the model."""
 
 import os
+from pathlib import Path
 
 # --- Model -----------------------------------------------------------------
 MODEL = os.getenv("ADEOLA_MODEL", "qwen3:4b")
@@ -27,6 +28,16 @@ SAMPLE_RATE = 16000           # what Whisper expects
 MIN_RECORD_SECONDS = 0.4      # shorter presses are treated as accidental
 MAX_RECORD_SECONDS = 15
 BEEPS = True                  # short sounds when listening starts and stops
+
+# --- Spoken replies (Kokoro, runs on the CPU) ------------------------------------
+SPEAK_REPLIES = True          # with --voice, Adeola says her replies out loud
+# Your own mix of Kokoro voices. Audition blends with: python -m tests.voice_lab
+VOICE_BLEND = "af_heart*0.5 + af_bella*0.3 + bf_emma*0.2"
+VOICE_SPEED = 1.0
+TTS_MODEL = "kokoro-v1.0.fp16.onnx"   # fastest on CPU; the int8 file is ~4x slower
+MODELS_DIR = Path(__file__).resolve().parent.parent / "models"  # downloaded on first use
+# How to say words the voice gets wrong. Spelling is phonetic, tune it by ear.
+SPOKEN_FORMS = {"Adeola": "Ahdeh-ohla"}
 
 # What you say -> the name Windows shows in the Start menu.
 APP_ALIASES = {

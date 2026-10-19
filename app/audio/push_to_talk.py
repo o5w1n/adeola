@@ -27,7 +27,7 @@ def beep(freq: int) -> None:
 
 class PushToTalk:
     def __init__(self, router, recorder, transcriber, lock: threading.Lock | None = None,
-                 key=None, say=print, verbose: bool = False):
+                 key=None, say=print, verbose: bool = False, speaker=None):
         self.router = router
         self.recorder = recorder
         self.transcriber = transcriber
@@ -35,6 +35,7 @@ class PushToTalk:
         self.key = key
         self.say = say
         self.verbose = verbose
+        self.speaker = speaker  # optional: speaks replies, and is cut off when you press the key
         self.listening = False
         self._listener = None
 
@@ -54,6 +55,8 @@ class PushToTalk:
         if key != self.key or self.listening:  # holding a key repeats on_press; ignore repeats
             return
         self.listening = True
+        if self.speaker:
+            self.speaker.stop()  # talking over Adeola interrupts her
         self.recorder.start()
         beep(880)
         self.say("🎙  Listening...")
@@ -76,13 +79,18 @@ class PushToTalk:
         text = self.transcriber.transcribe(audio)
         stt_ms = (time.perf_counter() - start) * 1000
         if not text:
-            self.say(f"{config.ASSISTANT_NAME}: Sorry, I didn't catch that.")
+            self.reply("Sorry, I didn't catch that.")
             return None
         self.say(f"You (voice): {text}")
         with self.lock:
             result = self.router.handle(text)
-        self.say(f"{config.ASSISTANT_NAME}: {result.reply}")
+        self.reply(result.reply)
         if self.verbose:
             self.say(f"   [{seconds:.1f}s audio · speech-to-text {stt_ms:.0f} ms · "
                      f"{result.source} {result.ms:.0f} ms]")
         return result.reply
+
+    def reply(self, text: str) -> None:
+        self.say(f"{config.ASSISTANT_NAME}: {text}")
+        if self.speaker:
+            self.speaker.say(text)

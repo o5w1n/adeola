@@ -45,6 +45,18 @@ listening and a low one when it stops. Typing still works at the same time.
 - Change the key with `PUSH_TO_TALK_KEY`, e.g. `"alt_r"` or `"f9"`.
 - Wrong microphone? `python -m tests.mic_check --list`, then try `--device <number>`.
 
+## Adeola's voice
+
+With `--voice` (or `--speak` for typed commands), Adeola answers out loud using Kokoro on the
+CPU. Her voice is a blend of Kokoro voices set by `VOICE_BLEND` in `config.py`, so it's yours alone.
+The model downloads into `models/` on first run (about 205 MB). Press the talk key to interrupt her.
+
+```powershell
+python -m tests.voice_lab     # audition voices and blends, then type 'save'
+```
+
+If she says a word wrong, add a phonetic spelling to `SPOKEN_FORMS`, e.g. `{"Adeola": "Ahdeh-ohla"}`.
+
 ## Test
 
 ```powershell
@@ -83,6 +95,6 @@ The eval never opens anything, it only reports what would have run.
 
 ## Next phases
 
-2. Voice: ~~push-to-talk with faster-whisper~~ (done), Piper TTS for spoken replies, then a custom "Adeola" wake word (openWakeWord)
+2. Voice: ~~push-to-talk with faster-whisper~~, ~~spoken replies with a blended Kokoro voice~~ (done), then a custom "Adeola" wake word (openWakeWord)
 3. Memory: SQLite for preferences and projects
 4. Android: FastAPI server reachable over Tailscale
