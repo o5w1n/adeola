@@ -46,6 +46,8 @@ CASES = [
     ("tell me a short joke",                      (), None),
     ("who are you",                               (), None),
     ("what's the capital of Ghana",               (), None),
+    ("Adeola, what's up?",                        (), None),
+    ("I'm bored, any ideas?",                     (), None),
 ]
 
 

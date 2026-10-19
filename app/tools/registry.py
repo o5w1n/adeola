@@ -106,6 +106,7 @@ SCHEMAS = [
     _tool("web_search", "Search the web, only when the user asks to search or look something "
           "up, or needs current information. Answer general-knowledge questions yourself.",
           query="What to search for."),
-    _tool("get_time", "Tell the current time and date."),
+    _tool("get_time", "Tell the current time, date or day. Only when the user explicitly "
+          "asks what time, date or day it is, never for greetings like 'what's up'."),
     _tool("lock_pc", "Lock the computer screen."),
 ]

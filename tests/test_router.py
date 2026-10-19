@@ -135,6 +135,9 @@ class FastPathTests(unittest.TestCase):
         self.assertEqual(run(self.router, "what's today's date").calls, [("get_time", {})])
         self.assertEqual(run(self.router, "lock my computer").calls, [("lock_pc", {})])
         self.assertIn("open apps", run(self.router, "what can you do").reply)
+        for hi in ("Adeola, what's up?", "hello", "good morning"):
+            res = run(self.router, hi)
+            self.assertEqual((res.source, res.calls), ("fast", []), hi)
 
     def test_vague_open_goes_to_model(self):
         run(self.router, "open the thing I use for music")

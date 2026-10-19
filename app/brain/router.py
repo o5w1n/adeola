@@ -28,6 +28,9 @@ _TIME = re.compile(r"^(?:what(?:'s| is) (?:the (?:time|date)(?: today)?|today's 
                    r"|what time is it|what day is (?:it|today)|time|date)$")
 _LOCK = re.compile(r"^lock(?:\s+(?:my|the))?\s+(?:pc|computer|screen|laptop)$")
 _HELP = re.compile(r"^(?:help|what can you do)$")
+_GREETING = re.compile(r"^(?:hi|hello|hey|yo|sup|what'?s up|whats up|how are you(?: doing)?|"
+                       r"how'?s it going|good (?:morning|afternoon|evening))$")
+GREETING_TEXT = "Hey! What can I do for you?"
 _SPLIT = re.compile(r"\s*(?:,|\band\b|\bthen\b)\s*")
 
 
@@ -58,6 +61,8 @@ class Router:
         """Return tool calls, a direct reply string, or None if unsure."""
         if _HELP.match(text):
             return HELP_TEXT
+        if _GREETING.match(text):
+            return GREETING_TEXT
         if _TIME.match(text):
             return [("get_time", {})]
         if _LOCK.match(text):
