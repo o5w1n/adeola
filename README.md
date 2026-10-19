@@ -29,15 +29,21 @@ python main.py -v
 - `I want to write some code` (handled by the model)
 - `reload apps` after installing something new · `exit` to quit
 
-## Voice (push-to-talk)
+## Voice
 
 ```powershell
 python -m tests.mic_check          # check your mic and Whisper first
 python main.py --voice -v
 ```
 
-Hold **Right Ctrl**, say "open Brave", release. You'll hear a high beep when it starts
-listening and a low one when it stops. Typing still works at the same time.
+Two ways to talk, both on with `--voice`:
+
+- **Wake word:** say "Adeola, open Brave". Until you've trained her name
+  ([docs/wake_word.md](docs/wake_word.md)), the test phrase is "hey jarvis".
+- **Push-to-talk:** hold **Right Ctrl**, speak, release.
+
+A high beep means she's listening, a low one means she stopped. Typing still works at the same time.
+`python -m tests.wake_check` shows live wake-word scores for tuning `WAKE_THRESHOLD`.
 
 - Speech recognition is Whisper `base.en`, running on the CPU so the GPU stays free for the model.
   The first run downloads it (about 145 MB).
@@ -95,6 +101,6 @@ The eval never opens anything, it only reports what would have run.
 
 ## Next phases
 
-2. Voice: ~~push-to-talk with faster-whisper~~, ~~spoken replies with a blended Kokoro voice~~ (done), then a custom "Adeola" wake word (openWakeWord)
+2. Voice: ~~push-to-talk with faster-whisper~~, ~~spoken replies with a blended Kokoro voice~~ (done), ~~wake word~~ (done; train "Adeola" with [docs/wake_word.md](docs/wake_word.md))
 3. Memory: SQLite for preferences and projects
 4. Android: FastAPI server reachable over Tailscale

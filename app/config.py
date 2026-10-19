@@ -29,6 +29,15 @@ MIN_RECORD_SECONDS = 0.4      # shorter presses are treated as accidental
 MAX_RECORD_SECONDS = 15
 BEEPS = True                  # short sounds when listening starts and stops
 
+# Wake word: say the name instead of holding the key (both work with --voice).
+WAKE_WORD = True
+WAKE_MODEL = "adeola.onnx"    # your trained model, in models/. Until it exists, "hey jarvis" is used
+WAKE_FALLBACK = "hey_jarvis"  # built-in openWakeWord model for testing
+WAKE_THRESHOLD = 0.5          # 0-1. Raise to 0.6-0.7 if it triggers by itself
+END_SILENCE_SECONDS = 0.8     # after the wake word, this much quiet ends your command
+NO_SPEECH_TIMEOUT = 4.0       # give up if you say nothing after the wake word
+MAX_COMMAND_SECONDS = 10
+
 # --- Spoken replies (Kokoro, runs on the CPU) ------------------------------------
 SPEAK_REPLIES = True          # with --voice, Adeola says her replies out loud
 # Your own mix of Kokoro voices. Audition blends with: python -m tests.voice_lab

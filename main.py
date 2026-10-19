@@ -1,7 +1,7 @@
 """Adeola: a local assistant that opens apps and sites on Windows.
 
 Run:  python main.py              type commands
-      python main.py --voice      also hold Right Ctrl and speak; Adeola answers out loud
+      python main.py --voice      also speak: say the wake word, or hold Right Ctrl; Adeola answers out loud
       python main.py --speak      type commands, hear the replies
       add -v to see which path handled each command and how long it took
 """
@@ -53,6 +53,21 @@ def start_voice(router: Router, lock: threading.Lock, verbose: bool, speaker=Non
     ptt.start()
     key = config.PUSH_TO_TALK_KEY.replace("_r", " (right)").replace("_l", " (left)")
     print(f"{N}: Voice on. Hold {key} and speak, release when you're done.")
+
+    if config.WAKE_WORD:
+        try:
+            from app.audio.wake import OpenWakeWordDetector, WakeWord, wake_model_ref
+            model_ref, phrase = wake_model_ref()
+            wake = WakeWord(ptt.process, OpenWakeWordDetector(model_ref), speaker=speaker,
+                            is_busy=lambda: ptt.listening, verbose=verbose)
+            recorder.add_listener(wake.on_block)
+            print(f"{N}: Or just say \"{phrase}\" and then your command.")
+            if phrase != N:
+                print(f"   (No {config.WAKE_MODEL} in models/ yet, so the test phrase is used. "
+                      "See docs/wake_word.md.)")
+        except Exception as e:
+            print(f"{N}: Wake word couldn't start ({e.__class__.__name__}: {e}). "
+                  "Push-to-talk still works.")
     return ptt, recorder
 
 

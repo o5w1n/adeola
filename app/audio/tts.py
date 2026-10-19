@@ -11,6 +11,7 @@ import queue
 import re
 import sys
 import threading
+import time
 import urllib.request
 from pathlib import Path
 
@@ -101,6 +102,8 @@ class Speaker:
         self.set_voice(blend)
         self._queue: queue.Queue = queue.Queue()
         self._generation = 0          # bumped by stop(); older work is skipped
+        self.speaking = False         # True while a reply is being generated or played
+        self.last_spoke = 0.0         # time.monotonic() when the last reply finished
         self._lock = threading.Lock()
         self._worker = threading.Thread(target=self._run, daemon=True)
         self._worker.start()
@@ -144,6 +147,7 @@ class Speaker:
     def _run(self) -> None:
         while True:
             gen, text = self._queue.get()
+            self.speaking = True
             for sentence in split_sentences(speech_text(text)):
                 if not self._current(gen):
                     break
@@ -156,6 +160,10 @@ class Speaker:
                 if not self._current(gen):
                     break
                 self.player.play(audio, rate)
+            if self._queue.empty():
+                self.player.wait()        # let the last sentence finish before saying we're done
+                self.speaking = False
+                self.last_spoke = time.monotonic()
             self._queue.task_done()
 
     def wait_until_done(self) -> None:

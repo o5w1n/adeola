@@ -15,7 +15,7 @@ import numpy as np  # noqa: E402
 
 from app import config  # noqa: E402
 from app.audio.push_to_talk import PushToTalk  # noqa: E402
-from app.audio.recorder import BLOCK, Recorder  # noqa: E402
+from app.audio.recorder import BLOCK, PREROLL_SECONDS, Recorder  # noqa: E402
 from app.audio.stt import hint_prompt, is_noise  # noqa: E402
 from app.brain.router import Router  # noqa: E402
 from app.tools.applications import App, AppIndex  # noqa: E402
@@ -98,7 +98,8 @@ class RecorderTests(unittest.TestCase):
         self.feed(rec, 0.5, 10)   # 1 s while held
         audio = rec.stop()
         self.feed(rec, 0.9, 5)    # after release: not recorded
-        self.assertEqual(len(audio), 15 * BLOCK)
+        preroll_blocks = int(PREROLL_SECONDS * config.SAMPLE_RATE / BLOCK)
+        self.assertEqual(len(audio), (preroll_blocks + 10) * BLOCK)
         self.assertAlmostEqual(float(audio[0]), 0.1)
         self.assertAlmostEqual(float(audio[-1]), 0.5)
         self.assertEqual(len(rec.stop()), 0)
