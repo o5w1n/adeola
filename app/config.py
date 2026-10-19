@@ -7,6 +7,10 @@ MODEL = os.getenv("ADEOLA_MODEL", "qwen3:4b")
 KEEP_ALIVE = "30m"      # keep the model loaded so replies stay fast
 NUM_CTX = 4096          # fits fully in a 4 GB GPU with qwen3:4b
 HISTORY_TURNS = 3       # past exchanges sent to the model for chat context
+# "json": model must answer in a short fixed JSON shape (fast, can't ramble).
+# "tools": Ollama's native tool calling (more flexible, but small models write a lot).
+DECISION_MODE = os.getenv("ADEOLA_MODE", "json")
+MAX_OUTPUT_TOKENS = 150  # hard cap on how much the model may write per command
 
 # --- Behaviour -------------------------------------------------------------
 # ADEOLA_DRY_RUN=1 prints actions instead of performing them (used by the eval).

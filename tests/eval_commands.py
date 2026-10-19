@@ -4,6 +4,7 @@ Run from the project folder:
     python -m tests.eval_commands                      # full router, default model
     python -m tests.eval_commands --model qwen2.5:3b
     python -m tests.eval_commands --llm-only           # skip the fast path, test the model alone
+    python -m tests.eval_commands --mode tools         # native tool calling instead of JSON
 """
 
 import os
@@ -63,10 +64,11 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--model", default=config.MODEL)
     p.add_argument("--llm-only", action="store_true")
+    p.add_argument("--mode", choices=["json", "tools"], default=config.DECISION_MODE)
     args = p.parse_args()
 
-    brain = Brain(SCHEMAS, model=args.model)
-    print(f"Loading {args.model}...")
+    brain = Brain(SCHEMAS, model=args.model, mode=args.mode)
+    print(f"Loading {args.model} ({args.mode} mode)...")
     brain.warm_up()
     router = Router(Toolbox(AppIndex()), brain)
 
@@ -96,7 +98,9 @@ def main() -> None:
             all_stats.append(s)
             print(f"{'':10} load {s['load_ms']:.0f} ms · prompt {s['prompt_tokens']} tok in "
                   f"{s['prompt_ms']:.0f} ms · output {s['out_tokens']} tok at "
-                  f"{s['tok_per_s']:.1f} tok/s · thinking {s['thinking_chars']} chars")
+                  f"{s['tok_per_s']:.1f} tok/s · text {s['content_chars']} chars · "
+                  f"thinking {s['thinking_chars']} chars"
+                  + (" · BAD JSON" if s.get("parse_error") else ""))
 
     model_ms = [ms for s, ms in timings if s in ("llm", "chat")]
     fast_ms = [ms for s, ms in timings if s == "fast"]
@@ -118,22 +122,29 @@ def diagnose(stats: list[dict]) -> None:
         problems += 1
         print(f" - Model reloads on each call ({med('load_ms'):.0f} ms). Check `ollama ps` "
               "shows 100% GPU and nothing else is loaded alongside it.")
-    if med("thinking_chars") > 0 or med("out_tokens") > 120:
+    if med("thinking_chars") > 0:
         problems += 1
-        print(f" - Model is writing too much ({med('out_tokens'):.0f} tokens, "
-              f"{med('thinking_chars'):.0f} thinking chars). Thinking isn't switched off: "
-              "update Ollama (`ollama --version`) and the client (`pip install -U ollama`).")
-    if 0 < med("tok_per_s") < 15:
+        print(" - The model is still thinking before answering. Update Ollama "
+              "(`ollama --version`) and the client (`pip install -U ollama`).")
+    if med("out_tokens") > 80:
         problems += 1
-        print(f" - Generation is slow ({med('tok_per_s'):.1f} tok/s; expect 25+ on the GPU). "
-              "The model is probably running on the CPU: check `ollama ps` and `nvidia-smi`.")
-    if med("prompt_ms") > 3000:
+        print(f" - Replies are long ({med('out_tokens'):.0f} tokens; a tool call needs ~30). "
+              "Use JSON mode (the default) if you switched to tools mode.")
+    gen, read = med("tok_per_s"), med("prompt_tok_per_s")
+    if 0 < gen < 18 and read > 800:
         problems += 1
-        print(f" - Reading the prompt is slow ({med('prompt_ms'):.0f} ms for "
-              f"{med('prompt_tokens'):.0f} tokens). Another sign of CPU fallback.")
+        print(f" - The GPU is in use (prompt read at {read:.0f} tok/s) but writing is slow "
+              f"({gen:.1f} tok/s; this GPU should manage 20-30). Likely power-limited: plug in "
+              "the charger and set Windows power mode to 'Best performance'.")
+    elif 0 < gen < 18:
+        problems += 1
+        print(f" - Everything is slow ({gen:.1f} tok/s writing, {read:.0f} tok/s reading). "
+              "The model is probably on the CPU: check `ollama ps` and `nvidia-smi`.")
+    if sum(bool(s.get("parse_error")) for s in stats):
+        problems += 1
+        print(" - Some replies weren't valid JSON, usually because they hit the length cap.")
     if not problems:
         print(" - No obvious problem in Ollama's timings.")
-
 
 if __name__ == "__main__":
     main()

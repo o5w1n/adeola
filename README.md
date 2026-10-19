@@ -36,6 +36,7 @@ python -m unittest -v                          # fast-path logic, no model neede
 python -m tests.eval_commands                  # score qwen3:4b on 20 commands (dry run)
 python -m tests.eval_commands --model qwen2.5:3b
 python -m tests.eval_commands --llm-only       # model alone, no fast path
+python -m tests.eval_commands --mode tools     # native tool calling instead of JSON
 ```
 
 The eval never opens anything, it only reports what would have run.
@@ -46,7 +47,7 @@ The eval never opens anything, it only reports what would have run.
 "Adeola, open Brave"
    → clean()        strip wake word and politeness → "open brave"
    → fast path      regex + Start menu lookup      → open_app("brave")   ~0 ms
-   → (if unsure)    qwen3:4b picks an approved tool → open_app("Spotify")  ~0.5–2 s
+   → (if unsure)    qwen3:4b answers in a fixed JSON shape → open_app("Spotify")  ~1–3 s
    → Toolbox.run()  only the 5 tools in registry.py can ever execute
 ```
 

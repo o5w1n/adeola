@@ -52,27 +52,55 @@ class CleanTests(unittest.TestCase):
         self.assertEqual(clean("hey adeola what time is it"), "what time is it")
 
 
-class BrainTests(unittest.TestCase):
-    def test_decide_parses_tools_and_timings(self):
+class FakeOllama:
+    """Returns a canned Ollama response and remembers the request."""
+    def __init__(self, content="", tool_calls=None):
+        self.content, self.tool_calls = content, tool_calls
+
+    def chat(self, **kw):
         from types import SimpleNamespace as NS
+        self.kw = kw
+        msg = NS(content=self.content, tool_calls=self.tool_calls, thinking=None)
+        return NS(message=msg, load_duration=5e6, prompt_eval_count=200,
+                  prompt_eval_duration=1e8, eval_count=20, eval_duration=5e8)
+
+
+class BrainTests(unittest.TestCase):
+    def make(self, client, mode):
         from app.brain.model import Brain
+        from app.tools.registry import SCHEMAS
+        return Brain(SCHEMAS, model="qwen3:4b", client=client, mode=mode)
 
-        class FakeClient:
-            def chat(self, **kw):
-                self.kw = kw
-                call = NS(function=NS(name="open_app", arguments={"name": "Brave"}))
-                msg = NS(content="<think>hmm</think>", tool_calls=[call], thinking=None)
-                return NS(message=msg, load_duration=5e6, prompt_eval_count=200,
-                          prompt_eval_duration=1e8, eval_count=20, eval_duration=5e8)
-
-        client = FakeClient()
-        brain = Brain([], model="qwen3:4b", client=client)
+    def test_json_mode_tool_call(self):
+        client = FakeOllama('{"actions": [{"tool": "open_app", "argument": "Brave"},'
+                            ' {"tool": "get_time", "argument": ""}], "reply": ""}')
+        brain = self.make(client, "json")
         calls, reply = brain.decide("I want to browse")
-        self.assertEqual(calls, [("open_app", {"name": "Brave"})])
+        self.assertEqual(calls, [("open_app", {"name": "Brave"}), ("get_time", {})])
         self.assertEqual(reply, "")
+        self.assertIn("properties", client.kw["format"])     # shape enforced by Ollama
+        self.assertNotIn("tools", client.kw)
         self.assertFalse(client.kw["think"])
+        self.assertEqual(client.kw["options"]["num_predict"], 150)
         self.assertTrue(client.kw["messages"][0]["content"].endswith("/no_think"))
         self.assertEqual(brain.last_stats["tok_per_s"], 40)
+        self.assertEqual(brain.last_stats["prompt_tok_per_s"], 2000)
+
+    def test_json_mode_chat_and_bad_json(self):
+        brain = self.make(FakeOllama('{"actions": [], "reply": "Accra."}'), "json")
+        self.assertEqual(brain.decide("capital of ghana"), ([], "Accra."))
+        brain = self.make(FakeOllama('{"actions": [{"tool": "op'), "json")
+        calls, reply = brain.decide("x")
+        self.assertEqual(calls, [])
+        self.assertTrue(brain.last_stats["parse_error"])
+
+    def test_tools_mode(self):
+        from types import SimpleNamespace as NS
+        call = NS(function=NS(name="open_app", arguments={"name": "Brave"}))
+        client = FakeOllama("<think>hmm</think>", [call])
+        brain = self.make(client, "tools")
+        self.assertEqual(brain.decide("browse"), ([("open_app", {"name": "Brave"})], ""))
+        self.assertIn("tools", client.kw)
         self.assertEqual(brain.last_stats["thinking_chars"], len("<think>hmm</think>"))
 
 
@@ -104,6 +132,7 @@ class FastPathTests(unittest.TestCase):
         self.assertEqual(run(self.router, "search for kotlin flows on google").calls,
                          [("web_search", {"query": "kotlin flows"})])
         self.assertEqual(run(self.router, "what time is it?").calls, [("get_time", {})])
+        self.assertEqual(run(self.router, "what's today's date").calls, [("get_time", {})])
         self.assertEqual(run(self.router, "lock my computer").calls, [("lock_pc", {})])
         self.assertIn("open apps", run(self.router, "what can you do").reply)
 

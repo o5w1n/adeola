@@ -99,11 +99,13 @@ def _tool(tool_name: str, description: str, /, **params: str) -> dict:
 
 
 SCHEMAS = [
-    _tool("open_app", "Open an installed application on the PC.",
+    _tool("open_app", "Open an installed application on the PC. Task Manager shows what is "
+          "using the CPU or memory; Settings handles display, Wi-Fi, Bluetooth and sound.",
           name="App name as shown in the Windows Start menu, e.g. 'Brave', 'Visual Studio Code'."),
-    _tool("open_url", "Open a specific website address in the browser.",
+    _tool("open_url", "Open a specific website in the browser, e.g. 'youtube.com'.",
           url="The web address, e.g. 'github.com'."),
-    _tool("web_search", "Search the web for something.",
+    _tool("web_search", "Search the web, only when the user asks to search or look something "
+          "up, or needs current information. Answer general-knowledge questions yourself.",
           query="What to search for."),
     _tool("get_time", "Tell the current time and date."),
     _tool("lock_pc", "Lock the computer screen."),

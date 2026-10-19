@@ -24,7 +24,8 @@ _SEARCH = re.compile(
     r"^(?:search|google|look up)(?:\s+(?:the web|online|the internet))?(?:\s+for)?\s+(.+?)"
     r"(?:\s+on\s+(?:google|the web|the internet|brave))?$")
 _URL = re.compile(r"^(?:https?://)?[\w-]+(?:\.[\w-]+)+(?:/\S*)?$")
-_TIME = re.compile(r"^(?:what(?:'s| is) the (?:time|date)(?: today)?|what time is it|time|date)$")
+_TIME = re.compile(r"^(?:what(?:'s| is) (?:the (?:time|date)(?: today)?|today's date)"
+                   r"|what time is it|what day is (?:it|today)|time|date)$")
 _LOCK = re.compile(r"^lock(?:\s+(?:my|the))?\s+(?:pc|computer|screen|laptop)$")
 _HELP = re.compile(r"^(?:help|what can you do)$")
 _SPLIT = re.compile(r"\s*(?:,|\band\b|\bthen\b)\s*")
