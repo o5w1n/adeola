@@ -19,6 +19,15 @@ ASSISTANT_NAME = "Adeola"                       # what the assistant calls itsel
 WAKE_NAMES = (ASSISTANT_NAME.lower(),)  # names stripped from the start of commands
 SEARCH_URL = "https://www.google.com/search?q="
 
+# --- Voice (Phase 2) ---------------------------------------------------------
+PUSH_TO_TALK_KEY = "ctrl_r"   # hold Right Ctrl and speak. Any pynput key name ("f9", "alt_r") or a letter
+STT_MODEL = "base.en"         # Whisper size: "base.en" is fast; "small.en" is more accurate, ~3x slower
+STT_THREADS = 4               # CPU threads for Whisper (it stays off the GPU, which the LLM needs)
+SAMPLE_RATE = 16000           # what Whisper expects
+MIN_RECORD_SECONDS = 0.4      # shorter presses are treated as accidental
+MAX_RECORD_SECONDS = 15
+BEEPS = True                  # short sounds when listening starts and stops
+
 # What you say -> the name Windows shows in the Start menu.
 APP_ALIASES = {
     "vs code": "visual studio code",

@@ -1,4 +1,4 @@
-# Adeola — Phase 1
+# Adeola
 
 A local text assistant for Windows 11 that opens apps and websites, searches the web,
 tells the time and locks the PC. Runs entirely on your machine with Ollama.
@@ -28,6 +28,22 @@ python main.py -v
 - `what time is it` · `lock my pc`
 - `I want to write some code` (handled by the model)
 - `reload apps` after installing something new · `exit` to quit
+
+## Voice (push-to-talk)
+
+```powershell
+python -m tests.mic_check          # check your mic and Whisper first
+python main.py --voice -v
+```
+
+Hold **Right Ctrl**, say "open Brave", release. You'll hear a high beep when it starts
+listening and a low one when it stops. Typing still works at the same time.
+
+- Speech recognition is Whisper `base.en`, running on the CPU so the GPU stays free for the model.
+  The first run downloads it (about 145 MB).
+- Mishearing words? Set `STT_MODEL = "small.en"` in `config.py` (more accurate, slower).
+- Change the key with `PUSH_TO_TALK_KEY`, e.g. `"alt_r"` or `"f9"`.
+- Wrong microphone? `python -m tests.mic_check --list`, then try `--device <number>`.
 
 ## Test
 
@@ -67,6 +83,6 @@ The eval never opens anything, it only reports what would have run.
 
 ## Next phases
 
-2. Voice: push-to-talk hotkey, faster-whisper on CPU, Piper TTS, then a custom "Adeola" wake word (trained with openWakeWord)
+2. Voice: ~~push-to-talk with faster-whisper~~ (done), Piper TTS for spoken replies, then a custom "Adeola" wake word (openWakeWord)
 3. Memory: SQLite for preferences and projects
 4. Android: FastAPI server reachable over Tailscale

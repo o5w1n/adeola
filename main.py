@@ -1,10 +1,13 @@
-"""Phase 1: a text assistant that opens apps and sites on Windows.
+"""Adeola: a local assistant that opens apps and sites on Windows.
 
-Run:  python main.py            (add --verbose to see which path handled each command)
+Run:  python main.py              type commands
+      python main.py --voice      also hold Right Ctrl and speak
+      add -v to see which path handled each command and how long it took
 """
 
 import argparse
 import sys
+import threading
 
 from app import config
 from app.brain.model import Brain
@@ -22,10 +25,28 @@ def build(model: str = config.MODEL, use_model: bool = True) -> Router:
     return Router(Toolbox(apps), brain)
 
 
+def start_voice(router: Router, lock: threading.Lock, verbose: bool):
+    """Load Whisper, open the mic and start listening for the push-to-talk key."""
+    from app.audio.push_to_talk import PushToTalk
+    from app.audio.recorder import Recorder
+    from app.audio.stt import Transcriber
+
+    print(f"{N}: Loading speech recognition ({config.STT_MODEL})...")
+    transcriber = Transcriber()
+    recorder = Recorder()
+    recorder.open()
+    ptt = PushToTalk(router, recorder, transcriber, lock=lock, verbose=verbose)
+    ptt.start()
+    key = config.PUSH_TO_TALK_KEY.replace("_r", " (right)").replace("_l", " (left)")
+    print(f"{N}: Voice on. Hold {key} and speak, release when you're done.")
+    return ptt, recorder
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description=f"{config.ASSISTANT_NAME} text assistant")
+    parser = argparse.ArgumentParser(description=f"{N}, your local assistant")
     parser.add_argument("--model", default=config.MODEL)
     parser.add_argument("--no-model", action="store_true", help="fast path only")
+    parser.add_argument("--voice", action="store_true", help="enable push-to-talk")
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args()
 
@@ -40,6 +61,14 @@ def main() -> None:
         except Exception as e:
             print(f"{N}: Couldn't load {args.model} ({e}). Simple commands still work.")
 
+    lock = threading.Lock()  # typed and spoken commands take turns
+    voice = None
+    if args.voice:
+        try:
+            voice = start_voice(router, lock, args.verbose)
+        except Exception as e:
+            print(f"{N}: Voice couldn't start ({e.__class__.__name__}: {e}). Typing still works.")
+
     print(f"{N}: Online. Type 'help' for ideas or 'exit' to quit.")
     while True:
         try:
@@ -47,16 +76,24 @@ def main() -> None:
         except (EOFError, KeyboardInterrupt):
             print()
             break
+        if not text:
+            continue
         if text.lower().strip(" .!") in EXIT_WORDS:
             break
         if text.lower() == "reload apps":
             router.toolbox.apps = AppIndex()
             print(f"{N}: Re-indexed, {len(router.toolbox.apps.apps)} apps.")
             continue
-        result = router.handle(text)
+        with lock:
+            result = router.handle(text)
         print(f"{N}: {result.reply}")
         if args.verbose:
             print(f"   [{result.source}, {result.ms:.0f} ms, calls={result.calls}]")
+
+    if voice:
+        ptt, recorder = voice
+        ptt.stop()
+        recorder.close()
     print(f"{N}: Signing off.")
 
 
