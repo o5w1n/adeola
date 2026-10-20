@@ -10,8 +10,13 @@ The original openWakeWord Colab notebook no longer runs, so use the maintained 2
 **https://github.com/alfiedennen/openwakeword-colab-2026**
 
 1. Open `train_wakeword.ipynb` there and click **Open in Colab**.
-2. **Runtime → Change runtime type → GPU.** The free T4 works (about 2.5 h); an L4 on Colab Pro
-   takes about 75–90 min.
+2. **Runtime → Change runtime type**, then set both:
+   - **Hardware accelerator: GPU** (T4 GPU on the free tier, about 2.5 h; an L4 on Colab Pro
+     takes about 75–90 min). Without it the first cell shows `cuda: False`.
+   - **Runtime version: 2026.07**, not "Latest". The latest runtime uses Python 3.13, and the
+     notebook's speech packages only exist up to Python 3.12, so installs fail with
+     `No matching distribution found for piper-phonemize-cross`. Connecting to an older version
+     takes 2–3 minutes. Check the first cell prints `Python: 3.12...` and `cuda: True`.
 3. In the settings cell (cell 20, marked "EDIT THESE TWO LINES"), set exactly:
    ```python
    TARGET_PHRASE = ['ah day ola', 'ah day oh la']
@@ -33,6 +38,9 @@ The original openWakeWord Colab notebook no longer runs, so use the maintained 2
 - **`No module named 'dp'`**: your phrase has a word outside the dictionary. Use the phrases above,
   then add a new cell and run `!rm -rf /content/adeola_output`, and run again from cell 20 down.
   Cells 1–19 (installs and dataset downloads) don't need repeating unless the runtime restarted.
+- **`No matching distribution found for piper-phonemize-cross`** or **`No module named 'piper_phonemize'`**:
+  the runtime is Python 3.13. Set Runtime version to 2026.07 (step 2) and Run all again.
+- **`cuda: False`** in the first cell: no GPU selected (step 2).
 - **Runtime disconnected**: Colab wiped everything, so use Run all again.
 - Anything else: copy the error and the cell number.
 
