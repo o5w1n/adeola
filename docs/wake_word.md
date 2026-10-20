@@ -12,17 +12,29 @@ The original openWakeWord Colab notebook no longer runs, so use the maintained 2
 1. Open `train_wakeword.ipynb` there and click **Open in Colab**.
 2. **Runtime → Change runtime type → GPU.** The free T4 works (about 2.5 h); an L4 on Colab Pro
    takes about 75–90 min.
-3. In the cell with the settings (cell 10), set:
+3. In the settings cell (cell 20, marked "EDIT THESE TWO LINES"), set exactly:
    ```python
-   TARGET_PHRASE = 'ahdeh ohla'
-   MODEL_NAME = 'adeola'
+   TARGET_PHRASE = ['ah day ola', 'ah day oh la']
+   MODEL_NAME    = 'adeola'
    ```
-   The phrase is spelled the way you *say* it, not the way it's written. Training uses
-   computer-generated voices, and "adeola" spelled normally comes out as "uh-DEE-oh-luh".
-   "ahdeh ohla" comes out as "AH-day-OH-luh". If you say it differently, adjust the spelling.
+   - It must be a **list** (square brackets), even for one phrase.
+   - The phrases are spelled the way you *say* her name (AH-day-OH-luh), using only ordinary
+     English words. Training uses computer-generated voices, which would read "adeola" as
+     "uh-DEE-oh-luh".
+   - Every word must be in the English pronunciation dictionary. A made-up word like "adeola"
+     or "ahdeh" makes the notebook crash with `No module named 'dp'`
+     ([known bug](https://github.com/alfiedennen/openwakeword-colab-2026/issues/1)).
 4. **Runtime → Run all**, and keep the tab open and in front. On the free tier Colab can
    disconnect a background tab.
 5. The last cell downloads **`adeola.onnx`**.
+
+### If a cell fails
+
+- **`No module named 'dp'`**: your phrase has a word outside the dictionary. Use the phrases above,
+  then add a new cell and run `!rm -rf /content/adeola_output`, and run again from cell 20 down.
+  Cells 1–19 (installs and dataset downloads) don't need repeating unless the runtime restarted.
+- **Runtime disconnected**: Colab wiped everything, so use Run all again.
+- Anything else: copy the error and the cell number.
 
 ## 2. Install
 
