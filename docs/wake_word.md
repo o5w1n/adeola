@@ -4,44 +4,43 @@ Adeola listens for her name with [openWakeWord](https://github.com/dscripka/open
 There's no ready-made "Adeola" model, so you train one once, for free, on Google Colab.
 Until you do, `--voice` uses the built-in **"hey jarvis"** model so you can test everything.
 
-## 1. Train (about 1.5–2.5 hours, mostly waiting)
+## 1. Train (about 2–3 hours, mostly waiting)
 
-The original openWakeWord Colab notebook no longer runs, so use the maintained 2026 version:
-**https://github.com/alfiedennen/openwakeword-colab-2026**
+Use the adapted notebook in this repo, **`tools/train_adeola_wakeword.ipynb`**. It's based on the
+maintained [openwakeword-colab-2026](https://github.com/alfiedennen/openwakeword-colab-2026)
+notebook, with fixes for the problems we hit:
 
-1. Open `train_wakeword.ipynb` there and click **Open in Colab**.
-2. **Runtime → Change runtime type**, then set both:
-   - **Hardware accelerator: GPU** (T4 GPU on the free tier, about 2.5 h; an L4 on Colab Pro
-     takes about 75–90 min). Without it the first cell shows `cuda: False`.
-   - **Runtime version: 2026.07**, not "Latest". The latest runtime uses Python 3.13, and the
-     notebook's speech packages only exist up to Python 3.12, so installs fail with
-     `No matching distribution found for piper-phonemize-cross`. Connecting to an older version
-     takes 2–3 minutes. Check the first cell prints `Python: 3.12...` and `cuda: True`.
-3. In the settings cell (cell 20, marked "EDIT THESE TWO LINES"), set exactly:
-   ```python
-   TARGET_PHRASE = ['ah day ola', 'ah day oh la']
-   MODEL_NAME    = 'adeola'
-   ```
-   - It must be a **list** (square brackets), even for one phrase.
-   - The phrases are spelled the way you *say* her name (AH-day-OH-luh), using only ordinary
-     English words. Training uses computer-generated voices, which would read "adeola" as
-     "uh-DEE-oh-luh".
-   - Every word must be in the English pronunciation dictionary. A made-up word like "adeola"
-     or "ahdeh" makes the notebook crash with `No module named 'dp'`
-     ([known bug](https://github.com/alfiedennen/openwakeword-colab-2026/issues/1)).
-4. **Runtime → Run all**, and keep the tab open and in front. On the free tier Colab can
-   disconnect a background tab.
-5. The last cell downloads **`adeola.onnx`**.
+- Downloads about 3 GB instead of about 25 GB. The full-size download is where free Colab kept
+  disconnecting, and training only ever used a slice of it.
+- Runs on a **CPU** runtime, so it doesn't use your free GPU allowance (a GPU is faster if you have one).
+- Settings already filled in for Adeola.
+- Saves `adeola.onnx` to your Google Drive as well as downloading it.
+
+Steps:
+
+1. Go to [colab.research.google.com](https://colab.research.google.com), then **File → Upload notebook**,
+   and choose `tools/train_adeola_wakeword.ipynb` from your project folder.
+2. **Runtime → Change runtime type**:
+   - **Runtime version: 2026.07**, not "Latest". Latest is Python 3.13, which the speech packages
+     don't support yet. Connecting to an older version takes 2–3 minutes.
+   - **Hardware accelerator: CPU** (or T4 GPU if you have allowance).
+3. **Runtime → Run all.** The first cell asks for Google Drive access, so approve it. Then keep the
+   tab open and in front. Free Colab may disconnect a background tab or show an "are you still
+   there?" prompt.
+4. When it finishes, `adeola.onnx` is in your Drive at `MyDrive/adeola.onnx`.
+
+The wake phrase is set as `['ah day ola', 'ah day oh la']`: her name spelled with ordinary English
+words so the training voices say AH-day-OH-luh. Don't change it to "adeola": words outside the
+English dictionary crash the notebook with `No module named 'dp'`.
 
 ### If a cell fails
 
-- **`No module named 'dp'`**: your phrase has a word outside the dictionary. Use the phrases above,
-  then add a new cell and run `!rm -rf /content/adeola_output`, and run again from cell 20 down.
-  Cells 1–19 (installs and dataset downloads) don't need repeating unless the runtime restarted.
 - **`No matching distribution found for piper-phonemize-cross`** or **`No module named 'piper_phonemize'`**:
-  the runtime is Python 3.13. Set Runtime version to 2026.07 (step 2) and Run all again.
-- **`cuda: False`** in the first cell: no GPU selected (step 2).
-- **Runtime disconnected**: Colab wiped everything, so use Run all again.
+  the runtime is Python 3.13. Set Runtime version to 2026.07 and Run all again.
+- **"Cannot connect to GPU backend"**: your free GPU allowance is used up for now (it resets after
+  a day or so). Choose CPU instead.
+- **Disconnected**: Colab wiped the session, so use Run all again. The downloads are now small, so
+  a retry costs minutes, not half an hour.
 - Anything else: copy the error and the cell number.
 
 ## 2. Install
