@@ -4,7 +4,16 @@ Adeola listens for her name with [openWakeWord](https://github.com/dscripka/open
 There's no ready-made "Adeola" model, so you train one once, for free, on Google Colab.
 Until you do, `--voice` uses the built-in **"hey jarvis"** model so you can test everything.
 
-## 1. Train (about 2–3 hours, mostly waiting)
+## 1. Train
+
+**Easiest: on a Mac.** One Terminal command, no Colab disconnects. See
+[tools/wakeword_mac/README.md](../tools/wakeword_mac/README.md):
+
+```bash
+bash tools/wakeword_mac/run.sh
+```
+
+**Or on Google Colab** (about 2–3 hours, mostly waiting):
 
 Use the adapted notebook in this repo, **`tools/train_adeola_wakeword.ipynb`**. It's based on the
 maintained [openwakeword-colab-2026](https://github.com/alfiedennen/openwakeword-colab-2026)

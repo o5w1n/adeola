@@ -1,0 +1,30 @@
+# Wake-word training on macOS (Apple Silicon or Intel), Python 3.12.
+# torch/torchaudio pinned together: torchaudio's last release is 2.11.
+torch==2.11.0
+torchaudio==2.11.0
+numpy>=2,<2.6
+scipy>=1.13
+onnx>=1.17
+onnxruntime>=1.20
+soundfile>=0.12
+pyyaml
+tqdm
+requests
+huggingface_hub
+pronouncing
+mutagen==1.47.0
+torchinfo
+torchmetrics
+audiomentations
+torch_audiomentations
+speechbrain
+scikit-learn
+webrtcvad-wheels
+stream-unzip
+pathvalidate
+librosa
+# Not listed on purpose:
+#   acoustics             unmaintained, breaks on current SciPy; replaced by a small built-in shim
+#   piper-phonemize(-cross) only imported by the Colab notebook's self-check; not needed
+#   piper-tts             installed separately with --no-deps (as the original notebook does)
+#   datasets              newer versions need torchcodec for audio; files are read directly instead
