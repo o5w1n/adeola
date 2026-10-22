@@ -48,6 +48,30 @@ MODELS_DIR = Path(__file__).resolve().parent.parent / "models"  # downloaded on 
 # How to say words the voice gets wrong. Spelling is phonetic, tune it by ear.
 SPOKEN_FORMS = {"Adeola": "Ahdeh-ohla"}
 
+# --- Memory (Phase 3) -----------------------------------------------------------
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"   # stays on this PC, not in git
+MEMORY_DB = DATA_DIR / "adeola.db"
+MEMORY_IN_PROMPT = 5          # how many relevant facts the model sees with each request
+
+# Folders whose subfolders are your projects ("open my Quail project").
+PROJECT_ROOTS = [
+    "~/AndroidStudioProjects",
+    "~/Projects",
+    "~/source/repos",
+    "~/Documents/GitHub",
+    "~/Documents/Projects",
+]
+# How to open a project folder in each app. The first one found is used; if none is,
+# the folder opens in File Explorer.
+PROJECT_OPENERS = {
+    "android studio": [
+        r"%ProgramFiles%\Android\Android Studio\bin\studio64.exe",
+        r"%LOCALAPPDATA%\Programs\Android Studio\bin\studio64.exe",
+        "studio64",
+    ],
+    "vs code": ["code", r"%LOCALAPPDATA%\Programs\Microsoft VS Code\Code.exe"],
+}
+
 # What you say -> the name Windows shows in the Start menu.
 APP_ALIASES = {
     "vs code": "visual studio code",

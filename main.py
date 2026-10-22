@@ -13,7 +13,9 @@ import threading
 from app import config
 from app.brain.model import Brain
 from app.brain.router import Router
+from app.memory.store import Memory
 from app.tools.applications import AppIndex
+from app.tools.projects import Projects
 from app.tools.registry import SCHEMAS, Toolbox
 
 N = config.ASSISTANT_NAME
@@ -22,8 +24,10 @@ EXIT_WORDS = {"exit", "quit", "goodbye", "bye"}
 
 def build(model: str = config.MODEL, use_model: bool = True) -> Router:
     apps = AppIndex()
+    memory = Memory(config.MEMORY_DB)
+    projects = Projects(memory)
     brain = Brain(SCHEMAS, model=model) if use_model else None
-    return Router(Toolbox(apps), brain)
+    return Router(Toolbox(apps, memory, projects), brain)
 
 
 def start_speaker():
@@ -82,7 +86,9 @@ def main() -> None:
 
     print(f"{N}: Indexing your apps...")
     router = build(args.model, not args.no_model)
-    print(f"{N}: Found {len(router.toolbox.apps.apps)} apps.")
+    tb = router.toolbox
+    print(f"{N}: Found {len(tb.apps.apps)} apps and {len(tb.projects.all())} projects; "
+          f"I remember {len(tb.memory.facts())} things.")
 
     if router.brain:
         try:
@@ -114,9 +120,11 @@ def main() -> None:
             continue
         if text.lower().strip(" .!") in EXIT_WORDS:
             break
-        if text.lower() == "reload apps":
+        if text.lower() in ("reload apps", "reload"):
             router.toolbox.apps = AppIndex()
-            print(f"{N}: Re-indexed, {len(router.toolbox.apps.apps)} apps.")
+            router.toolbox.projects.reload()
+            print(f"{N}: Re-indexed, {len(router.toolbox.apps.apps)} apps and "
+                  f"{len(router.toolbox.projects.all())} projects.")
             continue
         with lock:
             result = router.handle(text)

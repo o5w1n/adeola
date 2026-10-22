@@ -20,6 +20,7 @@ _THINK_TAGS = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 BASE_PROMPT = f"""You are {config.ASSISTANT_NAME}, a personal assistant running on the user's Windows 11 PC.
 Never say you did something unless a tool did it. Never invent tools.
+If the user tells you something about themselves and wants it kept, use remember.
 When the user wants to do one of these things, open the app named:
 """ + "\n".join(f"- {job}: {app}" for job, app in config.PREFERRED_APPS.items())
 
@@ -108,10 +109,14 @@ class Brain:
                 self._think_supported = False  # e.g. qwen2.5 has no thinking mode
         return self.client.chat(**kwargs)
 
-    def decide(self, text: str) -> tuple[list[tuple[str, dict]], str]:
-        """Return (tool calls, plain-text reply). One of them is usually empty."""
+    def decide(self, text: str, facts: list[str] | None = None) -> tuple[list[tuple[str, dict]], str]:
+        """Return (tool calls, plain-text reply). One of them is usually empty.
+        `facts` are relevant things the user asked to be remembered."""
+        memory = ([{"role": "system", "content": "Things the user told you before (use only if "
+                    "relevant):\n" + "\n".join(f"- {f}" for f in facts)}] if facts else [])
         messages = [{"role": "system", "content": self.system_prompt},
                     *self.history[-2 * config.HISTORY_TURNS:],
+                    *memory,
                     {"role": "user", "content": text}]
         resp = self._chat(messages)
         msg = resp.message

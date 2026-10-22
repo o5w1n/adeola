@@ -20,7 +20,9 @@ import time                # noqa: E402
 from app import config                     # noqa: E402
 from app.brain.model import Brain          # noqa: E402
 from app.brain.router import Router, clean  # noqa: E402
+from app.memory.store import Memory          # noqa: E402
 from app.tools.applications import AppIndex  # noqa: E402
+from app.tools.projects import Projects      # noqa: E402
 from app.tools.registry import SCHEMAS, Toolbox  # noqa: E402
 
 # (command, acceptable tool names, text the first argument should contain; None = any)
@@ -48,6 +50,16 @@ CASES = [
     ("what's the capital of Ghana",               (), None),
     ("Adeola, what's up?",                        (), None),
     ("I'm bored, any ideas?",                     (), None),
+    # memory and projects: fast path
+    ("remember that my exam is on Friday",        ("remember",), "exam"),
+    ("what do you remember",                      ("recall",), None),
+    ("open my quail project",                     ("open_project",), "quail"),
+    ("what was I doing earlier",                  ("recent_activity",), None),
+    # memory and projects: model path
+    ("I'm working on Quail this week, keep that in mind", ("remember",), "quail"),
+    ("when is my exam again?",                    ("recall",), "exam"),
+    ("let's work on Quail",                       ("open_project",), "quail"),
+    ("which apps did you open for me today?",     ("recent_activity",), None),
 ]
 
 
@@ -72,7 +84,10 @@ def main() -> None:
     brain = Brain(SCHEMAS, model=args.model, mode=args.mode)
     print(f"Loading {args.model} ({args.mode} mode)...")
     brain.warm_up()
-    router = Router(Toolbox(AppIndex()), brain)
+    memory = Memory(":memory:")                       # throwaway, nothing saved
+    memory.add_project("Quail", ".", "android studio")
+    memory.add_fact("My exam is on Friday")
+    router = Router(Toolbox(AppIndex(), memory, Projects(memory, roots=[])), brain)
 
     passed, timings, all_stats = 0, [], []
     print(f"\n{'':2} {'source':6} {'ms':>6}  command -> calls")

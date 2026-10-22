@@ -14,11 +14,13 @@ from dataclasses import dataclass, field
 from app import config
 from app.tools.registry import Toolbox
 
-HELP_TEXT = ("I can open apps and websites, search the web, tell you the time "
-             "and lock your PC. Try: 'open Brave', 'open notepad and calculator', "
-             "'search for Kotlin coroutines' or 'lock my PC'.")
+HELP_TEXT = ("I can open apps, websites and your projects, search the web, remember things "
+             "for you, tell you the time and lock your PC. Try: 'open Brave', 'open my Quail "
+             "project', 'remember my exam is on Friday', 'what do you remember' or "
+             "'what was I doing earlier'.")
 
-_POLITE = re.compile(r"^(?:(?:please|can you|could you|would you|hey)\s+)+|\s+(?:please|for me|now)$")
+_POLITE = re.compile(r"^(?:(?:please|can you|could you|would you|hey)\s+)+|\s+(?:please|for me|now)$",
+                     re.IGNORECASE)
 _OPEN = re.compile(r"^(?:open|launch|start|run|fire up|bring up|pull up)\s+(.+)$")
 _SEARCH = re.compile(
     r"^(?:search|google|look up)(?:\s+(?:the web|online|the internet))?(?:\s+for)?\s+(.+?)"
@@ -33,6 +35,22 @@ _GREETING = re.compile(r"^(?:hi|hello|hey|yo|sup|what'?s up|whats up|how are you
 GREETING_TEXT = "Hey! What can I do for you?"
 _SPLIT = re.compile(r"\s*(?:,|\band\b|\bthen\b)\s*")
 
+# -- memory and projects --
+_CONFIRM_FORGET_ALL = re.compile(r"^yes,? forget (?:everything|it all|all of it)$")
+_ADD_PROJECT = re.compile(r"^(?:add|save|remember) (?:my |a |the )?project (.+?) (?:at|in|=) (.+)$",
+                          re.IGNORECASE)
+_REMEMBER = re.compile(r"^(?:remember|note|make a note|keep in mind|don't forget)(?: that|:)?[\s,]+(.+)$",
+                       re.IGNORECASE)
+_RECALL = re.compile(r"^(?:what do you (?:remember|know)(?: about)?|what did i (?:tell you|say)(?: about)?|"
+                     r"do you remember)(?:\s+(.*))?$")
+_WORKING_ON = re.compile(r"^what am i (?:working on|doing)(?: .*)?$")
+_FORGET = re.compile(r"^forget (?:about )?(.+)$")
+_RECENT = re.compile(r"^what (?:was i|have i been|did i) (?:doing|working on|do|open)(?: .*)?$")
+_LIST_PROJECTS = re.compile(r"^(?:(?:list|show)(?: me)? (?:all )?(?:my |the )?projects|"
+                            r"what projects (?:do you know|do i have)|my projects)$")
+_OPEN_PROJECT = re.compile(r"^(?:open|launch|start|load|work on|let's work on)(?: up)? "
+                           r"(?:my |the )?(?:project )?(.+?)(?: project)$|^open project (.+)$")
+
 
 @dataclass
 class Result:
@@ -42,10 +60,12 @@ class Result:
     ms: float = 0.0
 
 
-def clean(text: str) -> str:
-    t = " ".join(text.lower().strip().split()).strip(" .!?")
+def clean(text: str, keep_case: bool = False) -> str:
+    t = " ".join(text.strip().split()).strip(" .!?")
+    if not keep_case:
+        t = t.lower()
     for name in config.WAKE_NAMES:
-        t = re.sub(rf"^(?:hey\s+|ok\s+)?{name}\b[\s,:]*", "", t)
+        t = re.sub(rf"^(?:hey\s+|ok\s+)?{name}\b[\s,:]*", "", t, flags=re.IGNORECASE)
     prev = None
     while prev != t:   # strip stacked politeness: "can you please ... for me"
         prev, t = t, _POLITE.sub("", t).strip(" ,.!?")
@@ -57,8 +77,30 @@ class Router:
         self.toolbox = toolbox
         self.brain = brain
 
-    def fast_parse(self, text: str) -> list[tuple[str, dict]] | str | None:
-        """Return tool calls, a direct reply string, or None if unsure."""
+    def fast_parse(self, text: str, cased: str = "") -> list[tuple[str, dict]] | str | None:
+        """Return tool calls, a direct reply string, or None if unsure.
+        `cased` is the same command with its original capitals, for things that get stored."""
+        cased = cased or text
+        if _CONFIRM_FORGET_ALL.match(text):
+            return self.toolbox.confirm_forget_all()
+        if m := _ADD_PROJECT.match(cased):
+            return self._add_project(m.group(1), m.group(2))
+        if m := _REMEMBER.match(cased):
+            return [("remember", {"note": m.group(1)})]
+        if m := _RECALL.match(text):
+            return [("recall", {"query": (m.group(1) or "").removeprefix("my ")})]
+        if _WORKING_ON.match(text):
+            return [("recall", {"query": "working on"})]
+        if m := _FORGET.match(text):
+            return [("forget", {"note": m.group(1)})]
+        if _RECENT.match(text):
+            return [("recent_activity", {})]
+        if _LIST_PROJECTS.match(text):
+            return [("list_projects", {})]
+        if (m := _OPEN_PROJECT.match(text)) and self.toolbox.projects is not None:
+            name = m.group(1) or m.group(2)
+            if self.toolbox.projects.find(name):
+                return [("open_project", {"name": name})]
         if _HELP.match(text):
             return HELP_TEXT
         if _GREETING.match(text):
@@ -81,6 +123,21 @@ class Router:
             return calls or None
         return None
 
+    def _add_project(self, name: str, path: str) -> str:
+        if self.toolbox.projects is None:
+            return "Projects aren't set up."
+        try:
+            p = self.toolbox.projects.add(name, path)
+        except FileNotFoundError as e:
+            return f"{e}. Check the path and try again."
+        return f"Added your {p.name} project. It'll open in {p.app.title().replace('Vs ', 'VS ')}."
+
+    def facts_for(self, text: str) -> list[str]:
+        mem = self.toolbox.memory
+        if mem is None or config.MEMORY_IN_PROMPT <= 0:
+            return []
+        return [f.text for f in mem.search(text, limit=config.MEMORY_IN_PROMPT)]
+
     def run_calls(self, calls: list[tuple[str, dict]]) -> str:
         return " ".join(self.toolbox.run(name, args) for name, args in calls)
 
@@ -90,7 +147,7 @@ class Router:
         if not text:
             return Result("Yes?", source="fast")
 
-        parsed = self.fast_parse(text)
+        parsed = self.fast_parse(text, clean(raw, keep_case=True))
         if isinstance(parsed, str):
             res = Result(parsed, source="fast")
         elif parsed:
@@ -99,7 +156,7 @@ class Router:
             res = Result("I didn't catch that, and the model is offline.", source="none")
         else:
             try:
-                calls, reply = self.brain.decide(text)
+                calls, reply = self.brain.decide(clean(raw, keep_case=True), self.facts_for(text))
             except Exception as e:  # Ollama not running, model missing, etc.
                 res = Result(f"I couldn't reach the local model ({e.__class__.__name__}). "
                              "Is Ollama running?", source="none")

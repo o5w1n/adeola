@@ -63,6 +63,30 @@ python -m tests.voice_lab     # audition voices and blends, then type 'save'
 
 If she says a word wrong, add a phonetic spelling to `SPOKEN_FORMS`, e.g. `{"Adeola": "Ahdeh-ohla"}`.
 
+## Memory and projects
+
+Adeola keeps a small memory in `data/adeola.db`, a single file on this PC (never uploaded, ignored
+by git). Things you can say or type:
+
+| You say | What happens |
+|---|---|
+| `remember that my exam is on Friday` | Saves it |
+| `what do you remember` · `what am I working on?` · `do you remember my exam` | Reads it back |
+| `forget my exam` · `forget that` | Deletes one memory |
+| `forget everything`, then `yes, forget everything` | Erases all of them (asks first) |
+| `open my Quail project` · `let's work on Quail` | Opens the folder in Android Studio or VS Code |
+| `list my projects` | Lists the projects she knows |
+| `what was I doing earlier?` | Apps, projects, sites and searches from the last day |
+
+**Projects** are found automatically in the folders listed in `PROJECT_ROOTS` (`config.py`):
+`~/AndroidStudioProjects`, `~/Projects`, `~/source/repos`, `~/Documents/GitHub` and
+`~/Documents/Projects`. Folders with Gradle files open in Android Studio, others in VS Code. For a
+folder somewhere else, type `add project NAME at C:\path\to\folder` once. After creating a new
+project folder, type `reload`.
+
+When a question goes to the model, Adeola also passes along the few memories that relate to it,
+so "should I study tonight?" can take your exam date into account.
+
 ## Test
 
 ```powershell
@@ -102,5 +126,5 @@ The eval never opens anything, it only reports what would have run.
 ## Next phases
 
 2. Voice: ~~push-to-talk with faster-whisper~~, ~~spoken replies with a blended Kokoro voice~~ (done), ~~wake word~~ (done; train "Adeola" with [docs/wake_word.md](docs/wake_word.md))
-3. Memory: SQLite for preferences and projects
+3. ~~Memory: SQLite for preferences and projects~~ (done)
 4. Android: FastAPI server reachable over Tailscale

@@ -30,8 +30,8 @@ class FakeBrain:
     def __init__(self, calls=None, reply=""):
         self.calls, self.reply, self.seen, self.history = calls or [], reply, [], []
 
-    def decide(self, text):
-        self.seen.append(text)
+    def decide(self, text, facts=None):
+        self.seen.append(text.lower())
         return self.calls, self.reply
 
     def remember(self, *_):
@@ -170,7 +170,7 @@ class ModelPathTests(unittest.TestCase):
 
     def test_model_offline(self):
         class Broken(FakeBrain):
-            def decide(self, text):
+            def decide(self, text, facts=None):
                 raise ConnectionError
         res = run(Router(Toolbox(FAKE_APPS), Broken()), "do something clever")
         self.assertIn("Ollama", res.reply)
