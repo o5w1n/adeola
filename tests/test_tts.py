@@ -12,6 +12,8 @@ import unittest   # noqa: E402
 
 import numpy as np  # noqa: E402
 
+from app import config  # noqa: E402
+
 from app.audio.tts import (AudioCache, Speaker, parse_blend, speech_chunks,  # noqa: E402
                            speech_text, split_sentences)
 
@@ -60,8 +62,9 @@ class HelperTests(unittest.TestCase):
             parse_blend("af_heart*0")
 
     def test_speech_text(self):
-        self.assertEqual(speech_text("I'm Adeola 🎙"), "I'm Ahdeh-ohla")
-        self.assertEqual(speech_text("adeola, hi"), "Ahdeh-ohla, hi")
+        said = config.SPOKEN_FORMS.get("Adeola", "Adeola")   # whatever pronunciation is configured
+        self.assertEqual(speech_text("I'm Adeola 🎙"), f"I'm {said}")
+        self.assertEqual(speech_text("adeola, hi"), f"{said}, hi")
         self.assertEqual(speech_text("Tip: Ctrl+Shift+T brings back a tab."),
                          "Tip: Control Shift T brings back a tab.")
         self.assertEqual(speech_text("Windows+E opens it."), "Windows E opens it.")
@@ -91,7 +94,8 @@ class SpeakerTests(unittest.TestCase):
         speaker, engine, player = self.make()
         speaker.say("Hi, I'm Adeola. Opening Brave.")
         speaker.wait_until_done()
-        self.assertEqual(engine.spoken, ["Hi, I'm Ahdeh-ohla.", "Opening Brave."])
+        said = config.SPOKEN_FORMS.get("Adeola", "Adeola")
+        self.assertEqual(engine.spoken, [f"Hi, I'm {said}.", "Opening Brave."])
         self.assertEqual(len(player.played), 2)
 
     def test_stop_cancels_queued_speech(self):
