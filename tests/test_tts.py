@@ -61,6 +61,9 @@ class HelperTests(unittest.TestCase):
     def test_speech_text(self):
         self.assertEqual(speech_text("I'm Adeola 🎙"), "I'm Ahdeh-ohla")
         self.assertEqual(speech_text("adeola, hi"), "Ahdeh-ohla, hi")
+        self.assertEqual(speech_text("Tip: Ctrl+Shift+T brings back a tab."),
+                         "Tip: Control Shift T brings back a tab.")
+        self.assertEqual(speech_text("Windows+E opens it."), "Windows E opens it.")
 
     def test_split_sentences(self):
         self.assertEqual(split_sentences("Opening Brave. Anything else? Yes!"),

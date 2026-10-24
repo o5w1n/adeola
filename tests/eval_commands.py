@@ -60,6 +60,8 @@ CASES = [
     ("when is my exam again?",                    ("recall",), "exam"),
     ("let's work on Quail",                       ("open_project",), "quail"),
     ("which apps did you open for me today?",     ("recent_activity",), None),
+    # mentioned in passing: answer + offer to remember
+    ("my dentist appointment is on Monday, any tips for staying calm?", ("offer_to_remember",), "dentist"),
 ]
 
 

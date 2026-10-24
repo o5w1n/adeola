@@ -84,6 +84,17 @@ by git). Things you can say or type:
 folder somewhere else, type `add project NAME at C:\path\to\folder` once. After creating a new
 project folder, type `reload`.
 
+**Keep or skip.** If you mention something that may matter later without asking her to remember
+it ("my dentist appointment is on Monday, any tips for staying calm?"), she answers and then asks
+"Want me to remember that...? Say keep or skip." Nothing is stored unless you say keep, and a skip
+isn't asked again that session. Turn it off with `OFFER_TO_REMEMBER = False` in `config.py`.
+
+**Fading tips.** Now and then, when she opens an app, she teaches you a shortcut for it ("Tip:
+Ctrl+L jumps straight to the address bar"). Tips come on the 1st, 3rd, 6th, 10th... open, each is
+retired after being taught twice, and when you've learned them all she stops. The idea is that she
+makes you faster, not more dependent. Say "no more tips" to switch them off, or "turn tips on".
+Add your own in `app/tools/tips.py`.
+
 When a question goes to the model, Adeola also passes along the few memories that relate to it,
 so "should I study tonight?" can take your exam date into account.
 

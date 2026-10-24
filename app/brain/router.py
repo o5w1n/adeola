@@ -17,7 +17,7 @@ from app.tools.registry import Toolbox
 HELP_TEXT = ("I can open apps, websites and your projects, search the web, remember things "
              "for you, tell you the time and lock your PC. Try: 'open Brave', 'open my Quail "
              "project', 'remember my exam is on Friday', 'what do you remember' or "
-             "'what was I doing earlier'.")
+             "'what was I doing earlier'. Say 'no more tips' to stop shortcut tips.")
 
 _POLITE = re.compile(r"^(?:(?:please|can you|could you|would you|hey)\s+)+|\s+(?:please|for me|now)$",
                      re.IGNORECASE)
@@ -48,6 +48,11 @@ _FORGET = re.compile(r"^forget (?:about )?(.+)$")
 _RECENT = re.compile(r"^what (?:was i|have i been|did i) (?:doing|working on|do|open)(?: .*)?$")
 _LIST_PROJECTS = re.compile(r"^(?:(?:list|show)(?: me)? (?:all )?(?:my |the )?projects|"
                             r"what projects (?:do you know|do i have)|my projects)$")
+_KEEP = re.compile(r"^(?:yes|yeah|yep|yup|sure|keep(?: it| that)?|ok(?:ay)?|please do|remember it)$")
+_SKIP = re.compile(r"^(?:no|nope|nah|skip(?: it| that)?|don't|no thanks|never mind)$")
+_TIPS_OFF = re.compile(r"^(?:no more tips|stop (?:the |giving me )?tips|turn (?:off )?tips off|"
+                       r"turn off (?:the )?tips|disable tips)$")
+_TIPS_ON = re.compile(r"^(?:turn (?:on )?tips on|turn on (?:the )?tips|enable tips|give me tips again)$")
 _OPEN_PROJECT = re.compile(r"^(?:open|launch|start|load|work on|let's work on)(?: up)? "
                            r"(?:my |the )?(?:project )?(.+?)(?: project)$|^open project (.+)$")
 
@@ -81,6 +86,10 @@ class Router:
         """Return tool calls, a direct reply string, or None if unsure.
         `cased` is the same command with its original capitals, for things that get stored."""
         cased = cased or text
+        if _TIPS_OFF.match(text):
+            return self.toolbox.tips.set_enabled(False)
+        if _TIPS_ON.match(text):
+            return self.toolbox.tips.set_enabled(True)
         if _CONFIRM_FORGET_ALL.match(text):
             return self.toolbox.confirm_forget_all()
         if m := _ADD_PROJECT.match(cased):
@@ -139,13 +148,21 @@ class Router:
         return [f.text for f in mem.search(text, limit=config.MEMORY_IN_PROMPT)]
 
     def run_calls(self, calls: list[tuple[str, dict]]) -> str:
-        return " ".join(self.toolbox.run(name, args) for name, args in calls)
+        return " ".join(filter(None, (self.toolbox.run(name, args) for name, args in calls)))
 
     def handle(self, raw: str) -> Result:
         start = time.perf_counter()
         text = clean(raw)
         if not text:
             return Result("Yes?", source="fast")
+
+        # A pending "want me to remember that?" is answered by the very next command only.
+        if self.toolbox.pending_offer is not None:
+            if _KEEP.match(text) or _SKIP.match(text):
+                res = Result(self.toolbox.answer_offer(keep=bool(_KEEP.match(text))), source="fast")
+                res.ms = (time.perf_counter() - start) * 1000
+                return res
+            self.toolbox.pending_offer = None
 
         parsed = self.fast_parse(text, clean(raw, keep_case=True))
         if isinstance(parsed, str):
@@ -161,8 +178,14 @@ class Router:
                 res = Result(f"I couldn't reach the local model ({e.__class__.__name__}). "
                              "Is Ollama running?", source="none")
             else:
-                if calls:
-                    res = Result(self.run_calls(calls), calls, "llm")
+                if calls and all(n == "offer_to_remember" for n, _ in calls):
+                    # answer the question, then ask about keeping the fact
+                    offer = self.run_calls(calls)
+                    res = Result(" ".join(filter(None, [reply, offer])) or
+                                 "Sorry, I'm not sure how to help with that.", calls, "chat")
+                elif calls:
+                    real = [c for c in calls if c[0] != "offer_to_remember"]
+                    res = Result(self.run_calls(real), real, "llm")
                 else:
                     res = Result(reply or "Sorry, I'm not sure how to help with that.",
                                  source="chat")

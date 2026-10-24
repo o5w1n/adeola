@@ -68,6 +68,10 @@ def speech_text(text: str) -> str:
     """Apply pronunciation fixes and drop symbols that shouldn't be read out."""
     for word, spoken in config.SPOKEN_FORMS.items():
         text = re.sub(rf"\b{re.escape(word)}\b", spoken, text, flags=re.IGNORECASE)
+    # keyboard shortcuts: "Ctrl+Shift+T" -> "Control Shift T"
+    text = re.sub(r"\bCtrl\b", "Control", text)
+    text = re.sub(r"\bEsc\b", "Escape", text)
+    text = re.sub(r"(?<=\w)\+(?=\w)", " ", text)
     return re.sub(r"[^\w\s.,!?;:'%()-]", "", text).strip()
 
 

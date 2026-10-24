@@ -4,6 +4,7 @@ Three tables:
   facts     things you asked her to remember ("I'm working on Quail this week")
   projects  folders you added by hand (scanned folders are found automatically)
   activity  a log of what she did for you, for "what was I doing earlier?"
+  counters  small numbers: how often each app was opened, which tips were taught
 """
 
 from __future__ import annotations
@@ -65,6 +66,7 @@ class Memory:
                     name TEXT PRIMARY KEY, path TEXT NOT NULL, app TEXT NOT NULL, created TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS activity (
                     id INTEGER PRIMARY KEY, ts TEXT NOT NULL, kind TEXT NOT NULL, detail TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS counters (key TEXT PRIMARY KEY, n INTEGER NOT NULL);
             """)
 
     def _q(self, sql: str, args: tuple = ()) -> list[tuple]:
@@ -129,6 +131,19 @@ class Memory:
         rows = self._q("SELECT ts, kind, detail FROM activity WHERE ts >= ? ORDER BY id DESC LIMIT ?",
                        (since, limit))
         return rows[::-1]
+
+    # -- counters -----------------------------------------------------------------------
+    def get_counter(self, key: str) -> int:
+        rows = self._q("SELECT n FROM counters WHERE key = ?", (key,))
+        return rows[0][0] if rows else 0
+
+    def set_counter(self, key: str, n: int) -> None:
+        self._q("INSERT OR REPLACE INTO counters (key, n) VALUES (?, ?)", (key, n))
+
+    def bump(self, key: str) -> int:
+        n = self.get_counter(key) + 1
+        self.set_counter(key, n)
+        return n
 
     def close(self) -> None:
         self._db.close()

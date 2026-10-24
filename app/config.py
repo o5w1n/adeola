@@ -53,6 +53,10 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data"   # stays on this PC,
 MEMORY_DB = DATA_DIR / "adeola.db"
 MEMORY_IN_PROMPT = 5          # how many relevant facts the model sees with each request
 
+TIPS = True                   # teach a shortcut now and then when opening apps ("no more tips" stops them)
+TIP_REPEATS = 2               # each tip is retired after being taught this many times
+OFFER_TO_REMEMBER = True      # offer to remember things you mention in passing ("keep" / "skip")
+
 # Folders whose subfolders are your projects ("open my Quail project").
 PROJECT_ROOTS = [
     "~/AndroidStudioProjects",

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import sys
 import urllib.parse
+
+from rapidfuzz import fuzz
 import webbrowser
 from datetime import datetime
 
@@ -11,6 +13,7 @@ from app import config
 from app.memory.store import to_second_person
 from app.tools.applications import AppIndex, launch, normalize
 from app.tools.projects import open_project as _open_project_folder
+from app.tools.tips import Tips
 
 MEMORY_OFF = "My memory is switched off."
 
@@ -20,6 +23,9 @@ class Toolbox:
         self.apps = apps
         self.memory = memory        # app.memory.store.Memory, or None
         self.projects = projects    # app.tools.projects.Projects, or None
+        self.tips = Tips(memory)
+        self.pending_offer: str | None = None   # a fact waiting for "keep" or "skip"
+        self._skipped: set[str] = set()
         self._funcs = {
             "open_app": self.open_app,
             "open_url": self.open_url,
@@ -32,6 +38,7 @@ class Toolbox:
             "recall": self.recall,
             "forget": self.forget,
             "recent_activity": self.recent_activity,
+            "offer_to_remember": self.offer_to_remember,
         }
         self._pending_forget_all = False
 
@@ -41,7 +48,7 @@ class Toolbox:
         if app:
             launch(app.target)
             self._log("app", app.name)
-            return f"Opening {app.name}."
+            return self._with_tip(f"Opening {app.name}.", app.name)
         site = config.SITE_SHORTCUTS.get(normalize(name))
         if site:
             return self.open_url(site)
@@ -88,7 +95,11 @@ class Toolbox:
             return f"I couldn't find a project called {name}.{hint}"
         reply = _open_project_folder(p)
         self._log("project", p.name)
-        return reply
+        return self._with_tip(reply, "visual studio code" if p.app == "vs code" else p.app)
+
+    def _with_tip(self, reply: str, app_name: str) -> str:
+        tip = self.tips.after_open(app_name)
+        return f"{reply} {tip}" if tip else reply
 
     def list_projects(self) -> str:
         items = self.projects.all() if self.projects else []
@@ -134,6 +145,27 @@ class Toolbox:
             return f"I don't remember anything about {note}."
         self.memory.delete_fact(facts[0].id)
         return f"Forgotten: {to_second_person(facts[0].text)}."
+
+    def offer_to_remember(self, note: str) -> str:
+        """Ask before storing something the user only mentioned. Returns "" if not worth asking."""
+        note = note.strip().rstrip(".")
+        if (self.memory is None or not config.OFFER_TO_REMEMBER or not note
+                or note.lower() in self._skipped):
+            return ""
+        best = self.memory.search(note, limit=1)
+        if best and fuzz.token_set_ratio(best[0].text.lower(), note.lower()) >= 85:
+            return ""                                   # already remembered
+        self.pending_offer = note
+        return f"Want me to remember that {to_second_person(note[0].lower() + note[1:])}? Say keep or skip."
+
+    def answer_offer(self, keep: bool) -> str:
+        note, self.pending_offer = self.pending_offer, None
+        if note is None:
+            return ""
+        if keep:
+            return self.remember(note)
+        self._skipped.add(note.lower())
+        return "Okay, I won't."
 
     def confirm_forget_all(self) -> str:
         if self.memory is None:
@@ -231,6 +263,10 @@ SCHEMAS = [
           note="Which memory to delete, e.g. 'my exam date'."),
     _tool("recent_activity", "Say what the user was doing recently: apps, projects and sites "
           "you opened for them. Use for 'what was I doing earlier?'."),
+    _tool("offer_to_remember", "When the user mentions a personal fact that could matter later "
+          "(a deadline, appointment, plan or preference) without asking you to remember it, "
+          "answer them in 'reply' AND add this action. Do not use it for general questions.",
+          note="The fact in the user's words, e.g. 'My dentist appointment is on Monday'."),
 ]
 
 # Arguments the model may leave empty.

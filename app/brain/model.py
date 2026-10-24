@@ -75,7 +75,8 @@ class Brain:
         if mode == "json":
             prompt = (f"{BASE_PROMPT}\n\nTools:\n{_tool_lines(tool_schemas)}\n\n"
                       "Reply only with JSON.\n"
-                      '- If tools fit, list them in "actions" and set "reply" to "".\n'
+                      '- If tools fit, list them in "actions" and set "reply" to "" '
+                      '(except offer_to_remember, which goes with a normal reply).\n'
                       '- Otherwise set "actions" to [] and answer in "reply" with at most '
                       "two short sentences.\n"
                       'Example: {"actions": [{"tool": "open_app", "argument": "Brave"}], "reply": ""}')
