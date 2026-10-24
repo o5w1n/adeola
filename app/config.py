@@ -122,3 +122,6 @@ SITE_SHORTCUTS = {
     "google drive": "https://drive.google.com",
     "whatsapp web": "https://web.whatsapp.com",
 }
+
+# Generated speech is cached here so repeated replies play instantly (safe to delete).
+VOICE_CACHE_DIR = DATA_DIR / "voice_cache"

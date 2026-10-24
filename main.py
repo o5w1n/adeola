@@ -30,12 +30,39 @@ def build(model: str = config.MODEL, use_model: bool = True) -> Router:
     return Router(Toolbox(apps, memory, projects), brain)
 
 
-def start_speaker():
+# Short replies she says often. Generated in the background at startup so they play instantly.
+COMMON_REPLIES = [
+    "Yes?", "Sorry, I didn't catch that.", "Hey! What can I do for you?", "Paused.", "Playing.",
+    "Next track.", "Previous track.", "Muted.", "Unmuted.", "Turned it up.", "Turned it down.",
+    "Nothing is playing right now.", "Locking your PC.", "Okay, no more tips.", "Okay, I won't.",
+]
+
+
+def likely_replies(router: Router) -> list[str]:
+    """Common replies, then "Opening X." for your apps (most used first), then your projects."""
+    tb = router.toolbox
+    names: list[str] = []
+    wanted = [k for k, _ in tb.memory.top_counters("open:", 15)] if tb.memory else []
+    wanted += list(config.PREFERRED_APPS.values()) + list(config.BUILTIN_APPS)
+    for n in wanted:
+        app, _ = tb.apps.resolve(n)
+        if app and app.name not in names:
+            names.append(app.name)
+    replies = COMMON_REPLIES + [f"Opening {n}." for n in names]
+    if tb.projects:
+        from app.tools.projects import opener_command
+        for p in tb.projects.all()[:15]:
+            where = p.app.title().replace("Vs ", "VS ") if opener_command(p.app, p.path) else "File Explorer"
+            replies.append(f"Opening your {p.name} project in {where}.")
+    return replies
+
+
+def start_speaker(verbose: bool = False):
     """Load Adeola's voice (Kokoro). Returns None if it can't start."""
     from app.audio.tts import Speaker
     print(f"{N}: Loading my voice...")
     try:
-        speaker = Speaker()
+        speaker = Speaker(verbose=verbose)
         speaker.warm_up()
         return speaker
     except Exception as e:
@@ -100,7 +127,9 @@ def main() -> None:
     lock = threading.Lock()  # typed and spoken commands take turns
     speaker = None
     if args.speak or (args.voice and config.SPEAK_REPLIES):
-        speaker = start_speaker()
+        speaker = start_speaker(args.verbose)
+        if speaker:
+            speaker.prewarm(likely_replies(router))   # background, only while idle
 
     voice = None
     if args.voice:

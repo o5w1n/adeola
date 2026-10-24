@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from app import config
 from app.tools.registry import Toolbox
 
-HELP_TEXT = ("I can open apps, websites and your projects, search the web, remember things "
+HELP_TEXT = ("I can open apps, websites and your projects, control music and volume, search the web, remember things "
              "for you, tell you the time and lock your PC. Try: 'open Brave', 'open my Quail "
              "project', 'remember my exam is on Friday', 'what do you remember' or "
              "'what was I doing earlier'. Say 'no more tips' to stop shortcut tips.")
@@ -48,6 +48,16 @@ _FORGET = re.compile(r"^forget (?:about )?(.+)$")
 _RECENT = re.compile(r"^what (?:was i|have i been|did i) (?:doing|working on|do|open)(?: .*)?$")
 _LIST_PROJECTS = re.compile(r"^(?:(?:list|show)(?: me)? (?:all )?(?:my |the )?projects|"
                             r"what projects (?:do you know|do i have)|my projects)$")
+_MEDIA = re.compile(
+    r"^(?:pause|stop|resume|unpause|play|continue)(?: (?:the |my |this )?"
+    r"(?:music|song|track|video|spotify|youtube|it|playing|playback))?$"
+    r"|^(?:next|skip|previous|last)(?: (?:song|track|one|video))?$|^skip (?:this|it)(?: song| track)?$"
+    r"|^(?:go )?back (?:a |one )?(?:song|track)$|^play (?:the )?(?:next|previous|last) (?:song|track|one)$"
+    r"|^what(?:'s| is) (?:playing|this song)(?: right now| now)?$|^what song is (?:this|playing)$"
+    r"|^who (?:sings|is singing) this(?: song)?$"
+    r"|^(?:volume|turn it|turn the volume|turn the music|turn the sound) (?:up|down)$"
+    r"|^(?:louder|quieter|softer)$|^(?:mute|unmute)(?: (?:the )?(?:sound|volume|music|it|pc))?$"
+    r"|^(?:set )?(?:the )?volume (?:to )?\d{1,3}(?: ?%| percent)?$")
 _KEEP = re.compile(r"^(?:yes|yeah|yep|yup|sure|keep(?: it| that)?|ok(?:ay)?|please do|remember it)$")
 _SKIP = re.compile(r"^(?:no|nope|nah|skip(?: it| that)?|don't|no thanks|never mind)$")
 _TIPS_OFF = re.compile(r"^(?:no more tips|stop (?:the |giving me )?tips|turn (?:off )?tips off|"
@@ -86,6 +96,8 @@ class Router:
         """Return tool calls, a direct reply string, or None if unsure.
         `cased` is the same command with its original capitals, for things that get stored."""
         cased = cased or text
+        if _MEDIA.match(text):
+            return [("media", {"command": text})]
         if _TIPS_OFF.match(text):
             return self.toolbox.tips.set_enabled(False)
         if _TIPS_ON.match(text):

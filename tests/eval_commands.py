@@ -60,6 +60,11 @@ CASES = [
     ("when is my exam again?",                    ("recall",), "exam"),
     ("let's work on Quail",                       ("open_project",), "quail"),
     ("which apps did you open for me today?",     ("recent_activity",), None),
+    # media: fast path, then looser phrasing for the model
+    ("pause the music",                           ("media",), "pause"),
+    ("what's playing",                            ("media",), None),
+    ("this is way too loud",                      ("media",), None),
+    ("I don't like this song, skip it",           ("media",), None),
     # mentioned in passing: answer + offer to remember
     ("my dentist appointment is on Monday, any tips for staying calm?", ("offer_to_remember",), "dentist"),
 ]

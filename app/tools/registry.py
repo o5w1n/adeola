@@ -13,6 +13,7 @@ from app import config
 from app.memory.store import to_second_person
 from app.tools.applications import AppIndex, launch, normalize
 from app.tools.projects import open_project as _open_project_folder
+from app.tools.media import Media
 from app.tools.tips import Tips
 
 MEMORY_OFF = "My memory is switched off."
@@ -24,6 +25,7 @@ class Toolbox:
         self.memory = memory        # app.memory.store.Memory, or None
         self.projects = projects    # app.tools.projects.Projects, or None
         self.tips = Tips(memory)
+        self.media_control = Media()
         self.pending_offer: str | None = None   # a fact waiting for "keep" or "skip"
         self._skipped: set[str] = set()
         self._funcs = {
@@ -39,6 +41,7 @@ class Toolbox:
             "forget": self.forget,
             "recent_activity": self.recent_activity,
             "offer_to_remember": self.offer_to_remember,
+            "media": self.media,
         }
         self._pending_forget_all = False
 
@@ -82,6 +85,9 @@ class Toolbox:
         else:
             return "Locking only works on Windows."
         return "Locking your PC."
+
+    def media(self, command: str) -> str:
+        return self.media_control.command(command)
 
     # -- projects --------------------------------------------------------------
     def open_project(self, name: str) -> str:
@@ -263,6 +269,10 @@ SCHEMAS = [
           note="Which memory to delete, e.g. 'my exam date'."),
     _tool("recent_activity", "Say what the user was doing recently: apps, projects and sites "
           "you opened for them. Use for 'what was I doing earlier?'."),
+    _tool("media", "Control music or video that is playing (Spotify, YouTube in the browser, "
+          "any player) and the PC volume: pause, play, next, previous, what's playing, "
+          "volume up/down, mute, unmute, set volume.",
+          command="What to do, e.g. 'pause', 'next', 'what's playing', 'volume up', 'volume 30'."),
     _tool("offer_to_remember", "When the user mentions a personal fact that could matter later "
           "(a deadline, appointment, plan or preference) without asking you to remember it, "
           "answer them in 'reply' AND add this action. Do not use it for general questions.",

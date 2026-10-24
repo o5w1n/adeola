@@ -12,7 +12,8 @@ import unittest   # noqa: E402
 
 import numpy as np  # noqa: E402
 
-from app.audio.tts import Speaker, parse_blend, speech_text, split_sentences  # noqa: E402
+from app.audio.tts import (AudioCache, Speaker, parse_blend, speech_chunks,  # noqa: E402
+                           speech_text, split_sentences)
 
 
 class FakeEngine:
@@ -74,7 +75,8 @@ class HelperTests(unittest.TestCase):
 class SpeakerTests(unittest.TestCase):
     def make(self):
         engine, player = FakeEngine(), FakePlayer()
-        return Speaker("af_heart*0.5 + bf_emma*0.5", engine=engine, player=player), engine, player
+        return (Speaker("af_heart*0.5 + bf_emma*0.5", engine=engine, player=player, cache_dir=None),
+                engine, player)
 
     def test_blend_mixes_styles(self):
         speaker, _, _ = self.make()
@@ -107,6 +109,51 @@ class SpeakerTests(unittest.TestCase):
         self.assertEqual(len(player.played), 1)
         self.assertNotIn("Never said.", engine.spoken)
         self.assertGreaterEqual(player.stops, 1)
+
+
+class CacheTests(unittest.TestCase):
+    def test_repeat_is_not_regenerated_and_survives_restart(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as d:
+            engine, player = FakeEngine(), FakePlayer()
+            sp = Speaker("af_heart", engine=engine, player=player, cache_dir=Path(d))
+            for _ in range(3):
+                sp.say("Opening Brave.")
+                sp.wait_until_done()
+            self.assertEqual(engine.spoken, ["Opening Brave."])          # generated once
+            self.assertEqual(len(player.played), 3)                      # played every time
+            engine2 = FakeEngine()
+            sp2 = Speaker("af_heart", engine=engine2, player=FakePlayer(), cache_dir=Path(d))
+            sp2.say("Opening Brave.")
+            sp2.wait_until_done()
+            self.assertEqual(engine2.spoken, [])                         # read from disk
+            sp3 = Speaker("bf_emma", engine=FakeEngine(), player=FakePlayer(), cache_dir=Path(d))
+            sp3.say("Opening Brave.")
+            sp3.wait_until_done()
+            self.assertEqual(sp3.engine.spoken, ["Opening Brave."])      # new voice, new audio
+
+    def test_numbers_not_cached(self):
+        self.assertFalse(AudioCache.cacheable("It's 16:20 on Saturday."))
+        self.assertTrue(AudioCache.cacheable("Opening Brave."))
+
+    def test_prewarm_runs_when_idle(self):
+        engine = FakeEngine()
+        sp = Speaker("af_heart", engine=engine, player=FakePlayer(), cache_dir=None)
+        sp.prewarm(["Opening Brave.", "Paused."], idle_seconds=0).join(2)
+        self.assertEqual(engine.spoken, ["Opening Brave.", "Paused."])
+        sp.say("Paused.")
+        sp.wait_until_done()
+        self.assertEqual(engine.spoken, ["Opening Brave.", "Paused."])  # no regeneration
+
+    def test_chunks(self):
+        long = "Take a few slow breaths, arrive a little early, and tell them you're nervous."
+        self.assertEqual(speech_chunks(long), ["Take a few slow breaths,", "arrive a little early,",
+                                               "and tell them you're nervous."])
+        self.assertEqual(speech_chunks("Opening Brave. Tip: Control L jumps to the bar."),
+                         ["Opening Brave.", "Tip: Control L jumps to the bar."])
+        self.assertEqual(speech_chunks("Yes, sure, I can do that for you right now, no problem at all."),
+                         ["Yes, sure, I can do that for you right now,", "no problem at all."])
 
 
 if __name__ == "__main__":

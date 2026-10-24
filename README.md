@@ -63,6 +63,26 @@ python -m tests.voice_lab     # audition voices and blends, then type 'save'
 
 If she says a word wrong, add a phonetic spelling to `SPOKEN_FORMS`, e.g. `{"Adeola": "Ahdeh-ohla"}`.
 
+## Music and volume
+
+Adeola controls whatever is playing through Windows' own media controls (the same ones your
+keyboard's play/pause key uses), so it works for Spotify Web in Brave, the Spotify app, YouTube
+and most players:
+
+`pause` · `resume` · `next song` · `previous track` · `what's playing?` · `turn it up` ·
+`turn it down` · `mute` · `unmute` · `set volume to 30`
+
+"Pause" goes to whatever is actually playing, and "play" to whatever was paused.
+
+## Response speed
+
+Her voice used to start 0.5–2 seconds after the action, while each sentence was being generated.
+Now each sentence's audio is cached (`data/voice_cache/`, safe to delete), so a repeated reply
+plays at once. While she's idle after startup, she generates her most likely replies in advance:
+your most-opened apps, preferred apps, projects and common answers. Long replies are spoken clause
+by clause, so speech starts after the first few words. With `-v` she prints
+`[voice started after N ms]` for each reply.
+
 ## Memory and projects
 
 Adeola keeps a small memory in `data/adeola.db`, a single file on this PC (never uploaded, ignored

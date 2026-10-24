@@ -140,6 +140,11 @@ class Memory:
     def set_counter(self, key: str, n: int) -> None:
         self._q("INSERT OR REPLACE INTO counters (key, n) VALUES (?, ?)", (key, n))
 
+    def top_counters(self, prefix: str, limit: int = 10) -> list[tuple[str, int]]:
+        rows = self._q("SELECT key, n FROM counters WHERE key LIKE ? ORDER BY n DESC LIMIT ?",
+                       (prefix + "%", limit))
+        return [(k[len(prefix):], n) for k, n in rows]
+
     def bump(self, key: str) -> int:
         n = self.get_counter(key) + 1
         self.set_counter(key, n)
