@@ -5,6 +5,11 @@ from pathlib import Path
 
 # --- Model -----------------------------------------------------------------
 MODEL = os.getenv("ADEOLA_MODEL", "qwen3:4b")
+BRAINS = {
+    "quick": "qwen3:1.7b",
+    "smart": MODEL,
+    "coder": "qwen2.5-coder:3b",
+}
 KEEP_ALIVE = "30m"      # keep the model loaded so replies stay fast
 KEEP_WARM_SECONDS = 0   # 0 = off (saves GPU memory); set e.g. 600 to ping Ollama every 10 idle minutes
 NUM_CTX = 4096          # fits fully in a 4 GB GPU with qwen3:4b
@@ -47,6 +52,12 @@ MAX_COMMAND_SECONDS = 10
 SPEAK_REPLIES = True          # with --voice, Adeola says her replies out loud
 # Your own mix of Kokoro voices. Audition blends with: python -m tests.voice_lab
 VOICE_BLEND = "af_heart*0.6 + bf_emma*0.4"
+VOICES = {
+    "default": VOICE_BLEND,
+    "warm": "af_heart*0.8 + bf_emma*0.2",
+    "calm": "bf_emma*0.7 + af_heart*0.3",
+    "bright": "af_bella*0.6 + af_heart*0.4",
+}
 VOICE_SPEED = 1
 TTS_MODEL = "kokoro-v1.0.fp16.onnx"   # fastest on CPU; the int8 file is ~4x slower
 MODELS_DIR = Path(__file__).resolve().parent.parent / "models"  # downloaded on first use

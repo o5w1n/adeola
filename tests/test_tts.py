@@ -132,6 +132,16 @@ class SpeakerTests(unittest.TestCase):
         self.assertEqual(len(player.played), 2)
         self.assertEqual(speaker.last_gap_ms, 0.0)
 
+    def test_switch_voice_shelf(self):
+        speaker = Speaker(engine=FakeEngine(), player=FakePlayer(), cache_dir=None)
+        self.assertEqual(speaker.voice_name(), "default")
+        ok, msg = speaker.switch_voice("calm")
+        self.assertEqual((ok, msg), (True, "Switched to my calm voice."))
+        self.assertEqual(speaker.voice_name(), "calm")
+        ok, msg = speaker.switch_voice("nonexistent")
+        self.assertFalse(ok)
+        self.assertIn("Available:", msg)
+
 
 class CacheTests(unittest.TestCase):
     def test_repeat_is_not_regenerated_and_survives_restart(self):

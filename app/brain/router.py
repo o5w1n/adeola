@@ -16,9 +16,9 @@ from app.memory.notes import NotesIndex
 from app.tools.registry import Toolbox
 
 HELP_TEXT = ("I can open apps, websites and your projects, control music and volume, search the web, remember things "
-             "for you, answer from your notes, tell you the time and lock your PC. Try: 'open Brave', 'open my Quail "
-             "project', 'remember my exam is on Friday', 'what do you remember', "
-             "'what do my notes say about …' or "
+             "for you, answer from your notes, switch brains and voices, tell you the time and lock your PC. Try: "
+             "'open Brave', 'open my Quail project', 'remember my exam is on Friday', 'what do you remember', "
+             "'what do my notes say about …', 'switch to your quick brain', 'use your calm voice' or "
              "'what was I doing earlier'. Say 'no more tips' to stop shortcut tips.")
 
 _POLITE = re.compile(r"^(?:(?:please|can you|could you|would you|hey)\s+)+|\s+(?:please|for me|now)$",
@@ -35,14 +35,37 @@ _HELP = re.compile(r"^(?:help|what can you do)$")
 _GREETING = re.compile(r"^(?:hi|hello|hey|yo|sup|what'?s up|whats up|how are you(?: doing)?|"
                        r"how'?s it going|good (?:morning|afternoon|evening))$")
 GREETING_TEXT = "Hey! What can I do for you?"
+GREETING_REPLIES = (
+    GREETING_TEXT,
+    "Hi! Ready when you are.",
+    "Hey there — what are we working on?",
+)
+_HONESTY_LOCAL = re.compile(
+    r"^(?:do you (?:cost anything|run locally|run offline|use the cloud|need (?:the )?internet|send data)"
+    r"|are you (?:local|offline|free|private)|where do you run|how much do you cost)$"
+)
+_HONESTY_INTERNET = re.compile(
+    r"^(?:what (?:needs|uses|requires) (?:the )?internet|what can(?:'t| not) you do offline)$"
+)
+LOCAL_HONESTY_TEXT = (
+    "I run locally on this PC with Ollama, Whisper and Kokoro. I cost nothing to run, "
+    "and nothing leaves your machine unless you ask me to open a website or search the web."
+)
+INTERNET_HONESTY_TEXT = (
+    "Only web search, opening websites, and first-run model downloads need the internet. "
+    "Everything else — apps, media, projects, memory, notes and voice — runs offline on this PC."
+)
 _SPLIT = re.compile(r"\s*(?:,|\band\b|\bthen\b)\s*")
 
 # -- memory and projects --
 _CONFIRM_FORGET_ALL = re.compile(r"^yes,? forget (?:everything|it all|all of it)$")
 _ADD_PROJECT = re.compile(r"^(?:add|save|remember) (?:my |a |the )?project (.+?) (?:at|in|=) (.+)$",
                           re.IGNORECASE)
-_REMEMBER = re.compile(r"^(?:remember|note|make a note|keep in mind|don't forget)(?: that|:)?[\s,]+(.+)$",
-                       re.IGNORECASE)
+_REMEMBER = re.compile(
+    r"^(?:remember|note to self|make a note|save a note|note|log this|log|jot down|"
+    r"keep in mind|don't (?:let me )?forget)(?:(?:\s+that)?\s*:|\s+that)?[\s,]+(.+)$",
+    re.IGNORECASE,
+)
 _RECALL = re.compile(r"^(?:what do you (?:remember|know)(?: about)?|what did i (?:tell you|say)(?: about)?|"
                      r"do you remember)(?:\s+(.*))?$")
 _WORKING_ON = re.compile(r"^what am i (?:working on|doing)(?: .*)?$")
@@ -68,6 +91,20 @@ _SKIP = re.compile(r"^(?:no|nope|nah|skip(?: it| that)?|don't|no thanks|never mi
 _TIPS_OFF = re.compile(r"^(?:no more tips|stop (?:the |giving me )?tips|turn (?:off )?tips off|"
                        r"turn off (?:the )?tips|disable tips)$")
 _TIPS_ON = re.compile(r"^(?:turn (?:on )?tips on|turn on (?:the )?tips|enable tips|give me tips again)$")
+_WHICH_BRAIN = re.compile(
+    r"^(?:(?:which|what) (?:brain|model|llm) (?:are you (?:on|using|running)|is (?:this|active|loaded))"
+    r"|what(?:'s| is) your (?:current )?(?:brain|model)|list (?:your |the )?(?:brains|models))$")
+_SWITCH_BRAIN = re.compile(
+    r"^(?:(?:switch|change) (?:to )?(?:your |the |my )?([\w.:-]+) (?:brain|model)"
+    r"|use (?:your |the |my )?([\w.:-]+) (?:brain|model)"
+    r"|(?:switch|change) (?:your |the |my )?(?:brain|model) to ([\w.:-]+))$")
+_WHICH_VOICE = re.compile(
+    r"^(?:(?:which|what) voice (?:are you (?:on|using)|is (?:this|active))"
+    r"|what(?:'s| is) your (?:current )?voice|list (?:your |the )?voices)$")
+_SWITCH_VOICE = re.compile(
+    r"^(?:(?:switch|change) (?:to )?(?:your |the |my )?([\w-]+) voice"
+    r"|use (?:your |the |my )?([\w-]+) voice"
+    r"|(?:switch|change) (?:your |the |my )?voice to ([\w-]+))$")
 _OPEN_PROJECT = re.compile(r"^(?:open|launch|start|load|work on|let's work on)(?: up)? "
                            r"(?:my |the )?(?:project )?(.+?)(?: project)$|^open project (.+)$")
 _NOTES_Q = re.compile(
@@ -99,10 +136,12 @@ def clean(text: str, keep_case: bool = False) -> str:
 
 
 class Router:
-    def __init__(self, toolbox: Toolbox, brain=None, notes: NotesIndex | None = None):
+    def __init__(self, toolbox: Toolbox, brain=None, notes: NotesIndex | None = None, speaker=None):
         self.toolbox = toolbox
         self.brain = brain
         self.notes = notes
+        self.speaker = speaker
+        self._greeting_idx = 0
 
     def fast_parse(self, text: str, cased: str = "") -> list[tuple[str, dict]] | str | None:
         """Return tool calls, a direct reply string, or None if unsure.
@@ -116,6 +155,14 @@ class Router:
             return self.toolbox.tips.set_enabled(False)
         if _TIPS_ON.match(text):
             return self.toolbox.tips.set_enabled(True)
+        if _WHICH_BRAIN.match(text):
+            return self._which_brain()
+        if m := _SWITCH_BRAIN.match(text):
+            return self._switch_brain(m.group(1) or m.group(2) or m.group(3))
+        if _WHICH_VOICE.match(text):
+            return self._which_voice()
+        if m := _SWITCH_VOICE.match(text):
+            return self._switch_voice(m.group(1) or m.group(2) or m.group(3))
         if _CONFIRM_FORGET_ALL.match(text):
             return self.toolbox.confirm_forget_all()
         if m := _ADD_PROJECT.match(cased):
@@ -138,8 +185,14 @@ class Router:
                 return [("open_project", {"name": name})]
         if _HELP.match(text):
             return HELP_TEXT
+        if _HONESTY_LOCAL.match(text):
+            return LOCAL_HONESTY_TEXT
+        if _HONESTY_INTERNET.match(text):
+            return INTERNET_HONESTY_TEXT
         if _GREETING.match(text):
-            return GREETING_TEXT
+            reply = GREETING_REPLIES[self._greeting_idx % len(GREETING_REPLIES)]
+            self._greeting_idx += 1
+            return reply
         if _TIME.match(text):
             return [("get_time", {})]
         if _LOCK.match(text):
@@ -166,6 +219,39 @@ class Router:
         except FileNotFoundError as e:
             return f"{e}. Check the path and try again."
         return f"Added your {p.name} project. It'll open in {p.app.title().replace('Vs ', 'VS ')}."
+
+    def _which_brain(self) -> str:
+        if self.brain is None:
+            return "The local model is switched off."
+        name = (self.brain.brain_name() if hasattr(self.brain, "brain_name")
+                else getattr(self.brain, "model", config.MODEL))
+        model = getattr(self.brain, "model", config.MODEL)
+        return f"I'm on my {name} brain ({model}). Available: {', '.join(config.BRAINS)}."
+
+    def _switch_brain(self, target: str) -> str:
+        if self.brain is None:
+            return "The local model is switched off."
+        key = target.strip().lower()
+        if key not in config.BRAINS and ":" not in target:
+            return f"Unknown brain '{target}'. Available: {', '.join(config.BRAINS)}."
+        _, msg = self.brain.switch_model(target)
+        return msg
+
+    def _which_voice(self) -> str:
+        if self.speaker is None:
+            return (f"Voice is off right now (default: {config.VOICE_BLEND}). "
+                    f"Available: {', '.join(config.VOICES)}.")
+        return (f"I'm using my {self.speaker.voice_name()} voice ({self.speaker.blend}). "
+                f"Available: {', '.join(config.VOICES)}.")
+
+    def _switch_voice(self, target: str) -> str:
+        key = target.strip().lower()
+        if self.speaker is None:
+            if key not in config.VOICES:
+                return f"Unknown voice '{target}'. Available: {', '.join(config.VOICES)}."
+            return f"Voice is off right now, but '{key}' is available when you run with --voice or --speak."
+        _, msg = self.speaker.switch_voice(target)
+        return msg
 
     def facts_for(self, text: str) -> list[str]:
         mem = self.toolbox.memory

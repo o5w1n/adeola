@@ -30,6 +30,22 @@ class FakeBrain:
     """Stands in for the model and records what reached it."""
     def __init__(self, calls=None, reply=""):
         self.calls, self.reply, self.seen, self.history = calls or [], reply, [], []
+        self.model = config.MODEL
+
+    def brain_name(self):
+        for name, tag in config.BRAINS.items():
+            if tag == self.model:
+                return name
+        return self.model
+
+    def switch_model(self, name_or_tag):
+        key = name_or_tag.strip().lower()
+        target = config.BRAINS.get(key, name_or_tag.strip())
+        label = key if key in config.BRAINS else target
+        if target == self.model:
+            return True, f"Already on my {label} brain ({self.model})."
+        self.model = target
+        return True, f"Switched to my {label} brain ({self.model})."
 
     def decide(self, text, facts=None, notes=None):
         self.seen.append(text.lower())
@@ -182,6 +198,43 @@ class BrainTests(unittest.TestCase):
         brain = self.make(FakeOllama(), "json")
         self.assertIsNone(brain.start_keep_warm(0))
 
+    def test_switch_model_updates_model_and_rolls_back_on_error(self):
+        client = FakeOllama()
+        brain = self.make(client, "json")
+        self.assertEqual(brain.brain_name(), "smart")
+
+        ok, msg = brain.switch_model("quick")
+        self.assertTrue(ok)
+        self.assertEqual(brain.model, "qwen3:1.7b")
+        self.assertEqual(brain.brain_name(), "quick")
+        self.assertIn("/no_think", brain.system_prompt)
+        self.assertIn("Switched to my quick brain", msg)
+
+        ok, msg = brain.switch_model("coder")
+        self.assertTrue(ok)
+        self.assertEqual(brain.model, "qwen2.5-coder:3b")
+        self.assertEqual(brain.brain_name(), "coder")
+        self.assertNotIn("/no_think", brain.system_prompt)
+
+        def fail_chat(**_kw):
+            raise RuntimeError("model not found")
+
+        client.chat = fail_chat
+        ok, msg = brain.switch_model("quick")
+        self.assertFalse(ok)
+        self.assertIn("ollama pull qwen3:1.7b", msg)
+        self.assertEqual(brain.model, "qwen2.5-coder:3b")
+        self.assertNotIn("/no_think", brain.system_prompt)
+
+    def test_persona_under_300_words_and_stable(self):
+        from app.brain.model import BASE_PROMPT
+        self.assertLessEqual(len(BASE_PROMPT.split()), 300)
+        self.assertIn("Receipts law", BASE_PROMPT)
+        self.assertIn("cost nothing", BASE_PROMPT)
+        b1 = self.make(FakeOllama(), "json")
+        b2 = self.make(FakeOllama(), "json")
+        self.assertEqual(b1.system_prompt, b2.system_prompt)
+
 
 class FastPathTests(unittest.TestCase):
     def setUp(self):
@@ -228,6 +281,48 @@ class FastPathTests(unittest.TestCase):
             self.assertEqual(res.reply, "Okay.", phrase)
             self.assertEqual(res.source, "fast", phrase)
             self.assertEqual(res.calls, [], phrase)
+        self.assertEqual(self.brain.seen, [])
+
+    def test_brain_and_voice_shelf_commands(self):
+        res = run(self.router, "which brain are you on")
+        self.assertEqual(res.source, "fast")
+        self.assertIn("smart brain", res.reply)
+
+        res = run(self.router, "switch to your quick brain")
+        self.assertEqual(res.source, "fast")
+        self.assertIn("Switched to my quick brain (qwen3:1.7b).", res.reply)
+        self.assertEqual(self.brain.model, "qwen3:1.7b")
+
+        res = run(self.router, "switch to Martian brain")
+        self.assertEqual(res.source, "fast")
+        self.assertIn("Unknown brain 'martian'", res.reply)
+        self.assertIn("Available:", res.reply)
+
+        res = run(self.router, "which voice are you using")
+        self.assertEqual(res.source, "fast")
+        self.assertIn("Voice is off right now", res.reply)
+        self.assertIn("Available:", res.reply)
+
+        res = run(self.router, "use your calm voice")
+        self.assertEqual(res.source, "fast")
+        self.assertIn("Voice is off right now, but 'calm' is available", res.reply)
+        self.assertEqual(self.brain.seen, [])
+
+    def test_greeting_rotates_across_turns(self):
+        from app.brain.router import GREETING_REPLIES
+        self.assertEqual(run(self.router, "hello").reply, GREETING_REPLIES[0])
+        self.assertEqual(run(self.router, "hello").reply, GREETING_REPLIES[1])
+        self.assertEqual(run(self.router, "hello").reply, GREETING_REPLIES[2])
+        self.assertEqual(self.brain.seen, [])
+
+    def test_honesty_lines_handled_on_fast_path(self):
+        for q in ("do you cost anything", "are you local", "where do you run"):
+            res = run(self.router, q)
+            self.assertEqual((res.source, res.calls), ("fast", []), q)
+            self.assertIn("cost nothing", res.reply, q)
+        res = run(self.router, "what needs the internet")
+        self.assertEqual((res.source, res.calls), ("fast", []))
+        self.assertIn("offline", res.reply)
         self.assertEqual(self.brain.seen, [])
 
 

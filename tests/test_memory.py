@@ -187,6 +187,27 @@ class RouterMemoryTests(unittest.TestCase):
         router = Router(Toolbox(AppIndex({})), FakeBrain())
         self.assertIn("switched off", run(router, "remember my exam is on Friday").reply)
 
+    def test_expanded_capture_phrases(self):
+        commands = [
+            "Adeola, note to self: the staging port is 8081",
+            "log this: shipped v1.2",
+            "don't let me forget that my passport renewal is in May",
+            "jot down: buy AA batteries",
+        ]
+        for cmd in commands:
+            res = run(self.router, cmd)
+            self.assertEqual(res.source, "fast", msg=f"Failed fast path for: {cmd}")
+        self.assertEqual(
+            [f.text for f in self.mem.facts()],
+            [
+                "The staging port is 8081",
+                "Shipped v1.2",
+                "My passport renewal is in May",
+                "Buy AA batteries",
+            ],
+        )
+        self.assertEqual(self.brain.seen, [])
+
 
 if __name__ == "__main__":
     unittest.main()

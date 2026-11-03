@@ -20,10 +20,17 @@ from app import config
 
 _THINK_TAGS = re.compile(r"<think>.*?</think>", re.DOTALL)
 
-BASE_PROMPT = f"""You are {config.ASSISTANT_NAME}, a personal assistant running on the user's Windows 11 PC.
-Never say you did something unless a tool did it. Never invent tools.
-If the user tells you something about themselves and wants it kept, use remember.
-When the user wants to do one of these things, open the app named:
+# Adeola's character & laws (kept under 300 words so the system prompt prefix stays small and fast).
+BASE_PROMPT = f"""You are {config.ASSISTANT_NAME}, a sharp, warm, practical assistant running locally on the user's Windows 11 PC.
+Speak plainly and concisely — one or two short sentences that sound natural out loud. Skip filler like "Certainly!", "Of course!", or "As an AI".
+
+Hard rules:
+- Receipts law: Never say you opened, changed, or saved anything unless a tool actually ran in this turn. Never invent tools.
+- Local & free: You run 100% on this PC (Ollama, Whisper, Kokoro). You cost nothing to run and never send conversation data to the cloud.
+- Internet honesty: Only opening websites and web search use the internet.
+- Memory: If the user tells you a personal fact or preference they want kept, use remember.
+
+When the user wants to do one of these jobs, open the preferred app:
 """ + "\n".join(f"- {job}: {app}" for job, app in config.PREFERRED_APPS.items())
 
 
@@ -74,9 +81,11 @@ class Brain:
         self._params = {s["function"]["name"]: list(s["function"]["parameters"]["properties"])
                         for s in tool_schemas}
         self._schema = _decision_schema(tool_schemas)
+        self.system_prompt = self._build_system_prompt(model)
 
-        if mode == "json":
-            prompt = (f"{BASE_PROMPT}\n\nTools:\n{_tool_lines(tool_schemas)}\n\n"
+    def _build_system_prompt(self, model: str) -> str:
+        if self.mode == "json":
+            prompt = (f"{BASE_PROMPT}\n\nTools:\n{_tool_lines(self.tools)}\n\n"
                       "Reply only with JSON.\n"
                       '- If tools fit, list them in "actions" and set "reply" to "" '
                       '(except offer_to_remember, which goes with a normal reply).\n'
@@ -87,7 +96,30 @@ class Brain:
             prompt = (f"{BASE_PROMPT}\nIf the request matches one of your tools, call it. "
                       "Otherwise answer in one or two short sentences of plain text.")
         # Qwen3 obeys this soft switch too, a backup in case `think=False` is ignored.
-        self.system_prompt = prompt + (" /no_think" if model.startswith("qwen3") else "")
+        return prompt + (" /no_think" if model.startswith("qwen3") else "")
+
+    def brain_name(self) -> str:
+        for name, tag in config.BRAINS.items():
+            if tag == self.model:
+                return name
+        return self.model
+
+    def switch_model(self, name_or_tag: str) -> tuple[bool, str]:
+        key = name_or_tag.strip().lower()
+        target = config.BRAINS.get(key, name_or_tag.strip())
+        label = key if key in config.BRAINS else target
+        if target == self.model:
+            return True, f"Already on my {label} brain ({self.model})."
+        prev = (self.model, self.system_prompt, self._think_supported)
+        self.model = target
+        self.system_prompt = self._build_system_prompt(target)
+        self._think_supported = True
+        try:
+            self.warm_up()
+        except Exception as e:
+            self.model, self.system_prompt, self._think_supported = prev
+            return False, f"Couldn't load {target} ({e}). Run: ollama pull {target}"
+        return True, f"Switched to my {label} brain ({self.model})."
 
     def _options(self, **extra) -> dict:
         return {"temperature": 0, "num_ctx": config.NUM_CTX, **extra}

@@ -212,6 +212,24 @@ class Speaker:
         self.style = sum(self.engine.get_voice_style(n) * w for n, w in parts).astype(np.float32)
         self.blend = blend
 
+    def voice_name(self) -> str:
+        for name, blend in config.VOICES.items():
+            if blend == self.blend:
+                return name
+        return self.blend
+
+    def switch_voice(self, name_or_blend: str) -> tuple[bool, str]:
+        key = name_or_blend.strip().lower()
+        blend = config.VOICES.get(key, name_or_blend.strip())
+        label = key if key in config.VOICES else blend
+        if blend == self.blend:
+            return True, f"Already using my {label} voice."
+        try:
+            self.set_voice(blend)
+        except ValueError:
+            return False, f"Unknown voice '{name_or_blend}'. Available: {', '.join(config.VOICES)}."
+        return True, f"Switched to my {label} voice."
+
     def synth(self, text: str):
         with self._engine_lock:
             return self.engine.create(text, voice=self.style, speed=config.VOICE_SPEED, lang="en-us")

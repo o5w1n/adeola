@@ -136,6 +136,7 @@ def main() -> None:
     speaker = None
     if args.speak or (args.voice and config.SPEAK_REPLIES):
         speaker = start_speaker(args.verbose)
+        router.speaker = speaker
         if speaker:
             speaker.prewarm(likely_replies(router))   # background, only while idle
 

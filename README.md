@@ -92,7 +92,7 @@ by git). Things you can say or type:
 
 | You say | What happens |
 |---|---|
-| `remember that my exam is on Friday` | Saves it |
+| `remember that my exam is on Friday` · `note to self: ...` · `log this: ...` · `don't let me forget ...` | Saves it |
 | `what do you remember` · `what am I working on?` · `do you remember my exam` | Reads it back |
 | `forget my exam` · `forget that` | Deletes one memory |
 | `forget everything`, then `yes, forget everything` | Erases all of them (asks first) |
@@ -141,6 +141,14 @@ When a reply uses your notes, Adeola prints the note titles underneath:
 ```
 
 Sources are printed only — never spoken out loud.
+
+## Brain and voice shelf
+
+Switch local Ollama models (`BRAINS` in `config.py`) or Kokoro voice blends (`VOICES` in `config.py`) on the fly:
+
+- **Brains:** `which brain are you on` · `switch to your quick brain` · `switch to your smart brain` · `use your coder brain`
+- **Voices:** `which voice are you using` · `use your calm voice` · `switch to your warm voice`
+- **Local honesty:** `do you cost anything` · `are you local` · `what needs the internet`
 
 ## Test
 
