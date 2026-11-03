@@ -167,6 +167,21 @@ class BrainTests(unittest.TestCase):
         self.assertEqual(len(client.budgets), 1)
         self.assertFalse(brain.last_stats["retried"])
 
+    def test_ping_if_idle_only_pings_after_threshold(self):
+        client = FakeOllama()
+        brain = self.make(client, "json")
+        brain.warm_up()
+        client.kw = None
+        self.assertFalse(brain.ping_if_idle(600))
+        self.assertIsNone(client.kw)
+        brain._last_call -= 601
+        self.assertTrue(brain.ping_if_idle(600))
+        self.assertEqual(client.kw["options"]["num_predict"], 1)
+
+    def test_start_keep_warm_disabled_when_zero(self):
+        brain = self.make(FakeOllama(), "json")
+        self.assertIsNone(brain.start_keep_warm(0))
+
 
 class FastPathTests(unittest.TestCase):
     def setUp(self):
@@ -206,6 +221,14 @@ class FastPathTests(unittest.TestCase):
     def test_vague_open_goes_to_model(self):
         run(self.router, "open the thing I use for music")
         self.assertEqual(self.brain.seen, ["open the thing i use for music"])
+
+    def test_interrupt_phrases_handled_on_fast_path(self):
+        for phrase in ("Adeola, wait", "never mind", "stop talking", "cancel"):
+            res = run(self.router, phrase)
+            self.assertEqual(res.reply, "Okay.", phrase)
+            self.assertEqual(res.source, "fast", phrase)
+            self.assertEqual(res.calls, [], phrase)
+        self.assertEqual(self.brain.seen, [])
 
 
 class ModelPathTests(unittest.TestCase):

@@ -114,6 +114,24 @@ class SpeakerTests(unittest.TestCase):
         self.assertNotIn("Never said.", engine.spoken)
         self.assertGreaterEqual(player.stops, 1)
 
+    def test_prefetch_overlaps_playback_with_zero_gap(self):
+        speaker, engine, player = self.make()
+        player.gate.clear()  # keep chunk 1 "playing" on the sound card
+        speaker.say("First sentence plays now. Second sentence prefetches while playing.")
+        for _ in range(200):
+            if len(engine.spoken) >= 2:
+                break
+            threading.Event().wait(0.01)
+        self.assertEqual(
+            engine.spoken,
+            ["First sentence plays now.", "Second sentence prefetches while playing."],
+        )
+        self.assertEqual(len(player.played), 1)
+        player.gate.set()
+        speaker.wait_until_done()
+        self.assertEqual(len(player.played), 2)
+        self.assertEqual(speaker.last_gap_ms, 0.0)
+
 
 class CacheTests(unittest.TestCase):
     def test_repeat_is_not_regenerated_and_survives_restart(self):
@@ -152,12 +170,13 @@ class CacheTests(unittest.TestCase):
 
     def test_chunks(self):
         long = "Take a few slow breaths, arrive a little early, and tell them you're nervous."
-        self.assertEqual(speech_chunks(long), ["Take a few slow breaths,", "arrive a little early,",
-                                               "and tell them you're nervous."])
+        self.assertEqual(speech_chunks(long), [long])
         self.assertEqual(speech_chunks("Opening Brave. Tip: Control L jumps to the bar."),
                          ["Opening Brave.", "Tip: Control L jumps to the bar."])
-        self.assertEqual(speech_chunks("Yes, sure, I can do that for you right now, no problem at all."),
-                         ["Yes, sure, I can do that for you right now,", "no problem at all."])
+        self.assertEqual(
+            speech_chunks("Yes, sure, I can do that for you right now, no problem at all.", max_chars=50),
+            ["Yes, sure, I can do that for you right now,", "no problem at all."],
+        )
 
 
 if __name__ == "__main__":

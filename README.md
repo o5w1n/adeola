@@ -41,6 +41,8 @@ Two ways to talk, both on with `--voice`:
 - **Wake word:** say "Adeola, open Brave". Until you've trained her name
   ([docs/wake_word.md](docs/wake_word.md)), the test phrase is "hey jarvis".
 - **Push-to-talk:** hold **Right Ctrl**, speak, release.
+- **Mid-sentence pause window:** after `END_SILENCE_SECONDS` (0.8 s) of quiet, Adeola waits an extra `FINISH_SECONDS` (0.7 s) before ending capture. If you keep speaking after a brief breath or pause, she resumes listening seamlessly instead of cutting you off.
+- **Voice barge-in:** while Adeola is speaking, wake-word detection stays active at a higher threshold (`BARGE_IN_THRESHOLD = 0.75`). Saying her wake word ("Adeola, stop" or "Adeola, wait") cuts off playback immediately and captures your new command.
 
 A high beep means she's listening, a low one means she stopped. Typing still works at the same time.
 `python -m tests.wake_check` shows live wake-word scores for tuning `WAKE_THRESHOLD`.
@@ -81,7 +83,7 @@ Now each sentence's audio is cached (`data/voice_cache/`, safe to delete), so a 
 plays at once. While she's idle after startup, she generates her most likely replies in advance:
 your most-opened apps, preferred apps, projects and common answers. Long replies are spoken clause
 by clause, so speech starts after the first few words. With `-v` she prints
-`[voice started after N ms]` for each reply.
+`[voice started after N ms]` for each reply. Sentences up to 170 characters are spoken whole with an 80 ms pause between sentences (only sentences exceeding 170 characters split at `, ; :` clause boundaries), while the next chunk is prefetched during playback to avoid mid-sentence cuts. To keep Ollama warm in GPU memory during idle stretches, set `KEEP_WARM_SECONDS` in `config.py` (e.g. `600` to ping every 10 idle minutes; `0` = off by default).
 
 ## Memory and projects
 

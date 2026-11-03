@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 import re
+import threading
+import time
 
 import ollama
 
@@ -67,6 +69,7 @@ class Brain:
         self.client = client or ollama.Client()
         self.history: list[dict] = []
         self._think_supported = True
+        self._last_call: float = time.monotonic()
         self.last_stats: dict = {}
         self._params = {s["function"]["name"]: list(s["function"]["parameters"]["properties"])
                         for s in tool_schemas}
@@ -93,8 +96,36 @@ class Brain:
         """Load the model into GPU memory with the same settings real calls use."""
         self.client.chat(model=self.model, messages=[{"role": "user", "content": "hi"}],
                          keep_alive=config.KEEP_ALIVE, options=self._options(num_predict=1))
+        self._last_call = time.monotonic()
+
+    def ping_if_idle(self, idle_seconds: float) -> bool:
+        """Ping Ollama to keep the model warm if no call has happened in `idle_seconds`."""
+        if time.monotonic() - self._last_call < idle_seconds:
+            return False
+        try:
+            self.warm_up()
+        except Exception:
+            pass
+        self._last_call = time.monotonic()
+        return True
+
+    def start_keep_warm(self, idle_seconds: float = config.KEEP_WARM_SECONDS) -> threading.Thread | None:
+        """Start a background daemon that pings Ollama when idle, or return None if disabled."""
+        if idle_seconds <= 0:
+            return None
+
+        def _loop() -> None:
+            step = max(1.0, min(idle_seconds / 4, 30.0))
+            while True:
+                time.sleep(step)
+                self.ping_if_idle(idle_seconds)
+
+        t = threading.Thread(target=_loop, daemon=True)
+        t.start()
+        return t
 
     def _chat(self, messages: list[dict], num_predict: int = config.MAX_OUTPUT_TOKENS):
+        self._last_call = time.monotonic()
         kwargs = dict(model=self.model, messages=messages, keep_alive=config.KEEP_ALIVE,
                       options=self._options(num_predict=num_predict))
         if self.mode == "json":
@@ -103,12 +134,16 @@ class Brain:
             kwargs["tools"] = self.tools
         if self._think_supported:
             try:
-                return self.client.chat(**kwargs, think=False)
+                resp = self.client.chat(**kwargs, think=False)
+                self._last_call = time.monotonic()
+                return resp
             except ollama.ResponseError as e:
                 if "think" not in str(e).lower():
                     raise
                 self._think_supported = False  # e.g. qwen2.5 has no thinking mode
-        return self.client.chat(**kwargs)
+        resp = self.client.chat(**kwargs)
+        self._last_call = time.monotonic()
+        return resp
 
     def _unpack(self, resp, retried: bool) -> str:
         msg = resp.message

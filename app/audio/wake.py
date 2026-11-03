@@ -7,6 +7,7 @@ speech-to-text and command handling as push-to-talk.
 
 from __future__ import annotations
 
+import collections
 import queue
 import threading
 import time
@@ -53,7 +54,7 @@ class OpenWakeWordDetector:
 
 
 class WakeWord:
-    IDLE, CAPTURE, BUSY = "idle", "capture", "busy"
+    IDLE, CAPTURE, FINISH, BUSY = "idle", "capture", "finish", "busy"
 
     def __init__(self, handle_audio, detector, speaker=None, is_busy=lambda: False,
                  say=print, verbose: bool = False):
@@ -65,6 +66,10 @@ class WakeWord:
         self.verbose = verbose
         self.state = self.IDLE
         self.noise_floor = 0.005
+        self._preroll: collections.deque = collections.deque(
+            maxlen=max(1, round(config.WAKE_PREROLL_SECONDS / BLOCK_SECONDS))
+        )
+        self._finish_elapsed = 0.0
         self._blocks: queue.Queue = queue.Queue(maxsize=200)
         self._worker = threading.Thread(target=self._run, daemon=True)
         self._worker.start()
@@ -87,6 +92,8 @@ class WakeWord:
             self._idle(block, rms)
         elif self.state == self.CAPTURE:
             self._capture(block, rms)
+        elif self.state == self.FINISH:
+            self._finish(block, rms)
         # BUSY: a command is being handled; ignore the mic until it's done
 
     def _adeola_talking(self) -> bool:
@@ -96,16 +103,26 @@ class WakeWord:
     def _idle(self, block: np.ndarray, rms: float) -> None:
         if rms < 0.05:  # learn the room's background level from quiet moments
             self.noise_floor = 0.95 * self.noise_floor + 0.05 * rms
+        if self.speaker and not self.speaker.speaking and (
+            time.monotonic() - self.speaker.last_spoke < SELF_TRIGGER_GUARD
+        ):
+            return
         score = self.detector.score(block)
-        if score < config.WAKE_THRESHOLD or self.is_busy() or self._adeola_talking():
+        speaking = bool(self.speaker and self.speaker.speaking)
+        threshold = config.BARGE_IN_THRESHOLD if speaking else config.WAKE_THRESHOLD
+        if score < threshold or self.is_busy():
+            if not speaking:
+                self._preroll.append(block)
             return
         if self.verbose:
             self.say(f"   [wake word {score:.2f}]")
         self.state = self.CAPTURE
-        self._audio: list[np.ndarray] = []
+        self._audio: list[np.ndarray] = [] if speaking else list(self._preroll)
+        self._preroll.clear()
         self._heard_speech = False
         self._quiet = 0.0
         self._elapsed = 0.0
+        self._finish_elapsed = 0.0
         if self.speaker:
             self.speaker.stop()
         beep(880)
@@ -121,18 +138,35 @@ class WakeWord:
         else:
             self._quiet += BLOCK_SECONDS
 
-        done = (
-            (self._heard_speech and self._quiet >= config.END_SILENCE_SECONDS)
-            or (not self._heard_speech and self._elapsed >= config.NO_SPEECH_TIMEOUT)
-            or self._elapsed >= config.MAX_COMMAND_SECONDS
-        )
-        if not done:
-            return
-        beep(440)
-        if not self._heard_speech:
+        if not self._heard_speech and self._elapsed >= config.NO_SPEECH_TIMEOUT:
+            beep(440)
             self.say("   (didn't hear a command)")
             self._back_to_idle()
             return
+        if self._elapsed >= config.MAX_COMMAND_SECONDS:
+            self._dispatch()
+            return
+        if self._heard_speech and self._quiet >= config.END_SILENCE_SECONDS:
+            if config.FINISH_SECONDS > 0:
+                self.state = self.FINISH
+                self._finish_elapsed = 0.0
+            else:
+                self._dispatch()
+
+    def _finish(self, block: np.ndarray, rms: float) -> None:
+        self._audio.append(block)
+        self._elapsed += BLOCK_SECONDS
+        self._finish_elapsed += BLOCK_SECONDS
+        speech_level = max(self.noise_floor * 3, 0.01)
+        if rms > speech_level:
+            self.state = self.CAPTURE
+            self._quiet = 0.0
+            return
+        if self._finish_elapsed >= config.FINISH_SECONDS or self._elapsed >= config.MAX_COMMAND_SECONDS:
+            self._dispatch()
+
+    def _dispatch(self) -> None:
+        beep(440)
         audio = np.concatenate(self._audio)
         self.state = self.BUSY
         threading.Thread(target=self._handle, args=(audio,), daemon=True).start()
@@ -145,6 +179,7 @@ class WakeWord:
 
     def _back_to_idle(self) -> None:
         self.detector.reset()
+        self._preroll.clear()
         while not self._blocks.empty():   # drop audio that arrived while we were busy
             try:
                 self._blocks.get_nowait()

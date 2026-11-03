@@ -6,6 +6,7 @@ from pathlib import Path
 # --- Model -----------------------------------------------------------------
 MODEL = os.getenv("ADEOLA_MODEL", "qwen3:4b")
 KEEP_ALIVE = "30m"      # keep the model loaded so replies stay fast
+KEEP_WARM_SECONDS = 0   # 0 = off (saves GPU memory); set e.g. 600 to ping Ollama every 10 idle minutes
 NUM_CTX = 4096          # fits fully in a 4 GB GPU with qwen3:4b
 HISTORY_TURNS = 3       # past exchanges sent to the model for chat context
 # "json": model must answer in a short fixed JSON shape (fast, can't ramble).
@@ -35,7 +36,10 @@ WAKE_WORD = True
 WAKE_MODEL = "adeola.onnx"    # your trained model, in models/. Until it exists, "hey jarvis" is used
 WAKE_FALLBACK = "hey_jarvis"  # built-in openWakeWord model for testing
 WAKE_THRESHOLD = 0.5          # 0-1. Raise to 0.6-0.7 if it triggers by itself
+BARGE_IN_THRESHOLD = 0.75     # higher wake-word threshold while Adeola is speaking so you can interrupt her
+WAKE_PREROLL_SECONDS = 0.4    # seconds of audio before the wake word kept at the start of capture
 END_SILENCE_SECONDS = 0.8     # after the wake word, this much quiet ends your command
+FINISH_SECONDS = 0.7          # extra quiet window after END_SILENCE_SECONDS that lets you pause mid-sentence; more speech resumes capture
 NO_SPEECH_TIMEOUT = 4.0       # give up if you say nothing after the wake word
 MAX_COMMAND_SECONDS = 10
 

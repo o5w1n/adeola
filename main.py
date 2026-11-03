@@ -129,6 +129,8 @@ def main() -> None:
             print(f"{N}: Model {args.model} loaded.")
         except Exception as e:
             print(f"{N}: Couldn't load {args.model} ({e}). Simple commands still work.")
+        if config.KEEP_WARM_SECONDS > 0:
+            router.brain.start_keep_warm(config.KEEP_WARM_SECONDS)
 
     lock = threading.Lock()  # typed and spoken commands take turns
     speaker = None

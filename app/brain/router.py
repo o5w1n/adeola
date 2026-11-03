@@ -50,6 +50,9 @@ _FORGET = re.compile(r"^forget (?:about )?(.+)$")
 _RECENT = re.compile(r"^what (?:was i|have i been|did i) (?:doing|working on|do|open)(?: .*)?$")
 _LIST_PROJECTS = re.compile(r"^(?:(?:list|show)(?: me)? (?:all )?(?:my |the )?projects|"
                             r"what projects (?:do you know|do i have)|my projects)$")
+_INTERRUPT = re.compile(
+    r"^(?:wait|hold on|hang on|quiet|be quiet|shut up|enough|cancel|never mind|nevermind|stop talking|stop speaking)$"
+)
 _MEDIA = re.compile(
     r"^(?:pause|stop|resume|unpause|play|continue)(?: (?:the |my |this )?"
     r"(?:music|song|track|video|spotify|youtube|it|playing|playback))?$"
@@ -105,6 +108,8 @@ class Router:
         """Return tool calls, a direct reply string, or None if unsure.
         `cased` is the same command with its original capitals, for things that get stored."""
         cased = cased or text
+        if _INTERRUPT.match(text):
+            return "Okay."
         if _MEDIA.match(text):
             return [("media", {"command": text})]
         if _TIPS_OFF.match(text):

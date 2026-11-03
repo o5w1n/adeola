@@ -80,18 +80,23 @@ def split_sentences(text: str) -> list[str]:
     return [s for s in re.split(r"(?<=[.!?])\s+", text) if s.strip(" .!?")]
 
 
-def speech_chunks(text: str, max_words: int = 10) -> list[str]:
-    """Sentences, with long ones split at commas and semicolons, so speech can start
-    after the first short clause instead of after the whole sentence is generated."""
-    out = []
+def speech_chunks(text: str, max_chars: int = 170) -> list[str]:
+    """Sentences kept intact up to max_chars; only sentences exceeding max_chars
+    are split at clause boundaries ([,;:]), packing clauses up to max_chars and
+    never leaving a 1- or 2-word fragment on its own."""
+    out: list[str] = []
     for sentence in split_sentences(text):
-        if len(sentence.split()) <= max_words:
+        if len(sentence) <= max_chars:
             out.append(sentence)
             continue
         parts = [p for p in re.split(r"(?<=[,;:])\s+", sentence) if p]
         merged: list[str] = []
         for part in parts:   # never leave a one- or two-word fragment on its own
-            if merged and (len(part.split()) < 3 or len(merged[-1].split()) < 3):
+            if merged and (
+                len(part.split()) < 3
+                or len(merged[-1].split()) < 3
+                or len(merged[-1]) + 1 + len(part) <= max_chars
+            ):
                 merged[-1] = f"{merged[-1]} {part}"
             else:
                 merged.append(part)
@@ -191,6 +196,7 @@ class Speaker:
         self.speaking = False         # True while a reply is being generated or played
         self.last_spoke = 0.0         # time.monotonic() when the last reply finished
         self.last_latency_ms = None   # say() -> first sound, for the most recent reply
+        self.last_gap_ms: float = 0.0 # max inter-chunk playback gap (ms) in the last reply
         self._last_request = 0.0
         self._lock = threading.Lock()
         self._engine_lock = threading.Lock()   # one generation at a time (live or pre-warm)
@@ -272,8 +278,12 @@ class Speaker:
     def _run(self) -> None:
         while True:
             gen, text, asked_at = self._queue.get()
+            was_speaking = self.speaking
             self.speaking = True
+            self.last_gap_ms = 0.0
             first = True
+            prev_play_started = 0.0
+            prev_audio_ms = 0.0
             for chunk in speech_chunks(speech_text(text)):
                 if not self._current(gen):
                     break
@@ -282,16 +292,29 @@ class Speaker:
                 except Exception as e:  # never let a bad sentence kill the voice
                     print(f"   (couldn't speak: {e})")
                     continue
-                self.player.wait()        # let the previous chunk finish
+                if not first or was_speaking:
+                    wait_start = time.perf_counter()
+                    self.player.wait()        # let the previous chunk finish
+                    wait_end = time.perf_counter()
+                    if not first:
+                        synth_ms = (wait_start - prev_play_started) * 1000
+                        wait_ms = (wait_end - wait_start) * 1000
+                        gap_ms = 0.0 if wait_ms >= 1.0 else max(0.0, synth_ms - prev_audio_ms)
+                        if gap_ms > self.last_gap_ms:
+                            self.last_gap_ms = gap_ms
                 if not self._current(gen):
                     break
                 self.player.play(audio, rate)
+                prev_play_started = time.perf_counter()
+                prev_audio_ms = (len(audio) / rate) * 1000 if rate else 0.0
                 if first:
                     first = False
                     self.last_latency_ms = (time.perf_counter() - asked_at) * 1000
                     if self.verbose:
                         print(f"   [voice started after {self.last_latency_ms:.0f} ms"
                               f"{', cached' if cached else ''}]", flush=True)
+            if self.verbose and self.last_gap_ms > 20:
+                print(f"   [voice gap {self.last_gap_ms:.0f} ms]", flush=True)
             if self._queue.empty():
                 self.player.wait()        # let the last chunk finish before saying we're done
                 self.speaking = False
