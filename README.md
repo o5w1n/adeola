@@ -118,6 +118,28 @@ Add your own in `app/tools/tips.py`.
 When a question goes to the model, Adeola also passes along the few memories that relate to it,
 so "should I study tonight?" can take your exam date into account.
 
+## Answers from your notes
+
+Adeola indexes the markdown files in your Obsidian vault (`NOTES_DIRS` in `config.py`, defaulting to
+`~/Documents/qabw` or the `ADEOLA_NOTES` environment variable). The index is strictly **read-only**:
+Adeola never writes, moves or deletes anything in your vault, and skips `.obsidian`, `.trash`,
+`.git`, `Templates` and files over `NOTES_MAX_BYTES` (200 KB).
+
+| You say | What happens |
+|---|---|
+| `what do my notes say about the finish window` | Pulls the top matching excerpts and answers from them |
+| `search my notes for zebras` · `check my vault for X` | Searches your notes (never opens a browser); says `"Your notes don't mention X."` if nothing matches |
+| Any question that clearly matches a note | Attaches the top excerpts (`NOTES_IN_PROMPT = 3`) so the model can ground its answer |
+| `reload` | Re-scans apps, projects and notes |
+
+When a reply uses your notes, Adeola prints the note titles underneath:
+
+```text
+   (from your notes: Finish Window, Operating Guide)
+```
+
+Sources are printed only — never spoken out loud.
+
 ## Test
 
 ```powershell
@@ -129,6 +151,38 @@ python -m tests.eval_commands --mode tools     # native tool calling instead of 
 ```
 
 The eval never opens anything, it only reports what would have run.
+
+### Preflight
+
+```powershell
+python -m tools.preflight
+```
+
+Runs a live end-to-end check across the whole stack:
+
+1. **Ollama + model** (`qwen3:4b` is pulled and reachable)
+2. **Brain, tool choice** (`"open notepad"` routes to `open_app`)
+3. **Brain, chat** (short conversational reply — timed as `think`)
+4. **Voice** (Kokoro TTS synthesizes the first clause of the test sentence — timed as `speak`)
+5. **The loop** (resamples the synthesized speech 24 kHz → 16 kHz, transcribes it with Whisper — timed as `hear` — and verifies fuzzy match ≥ 85%)
+6. **Memory round-trip** (`add_fact` → `search` → `delete_fact` on `data/adeola.db`)
+7. **Notes** (scans `NOTES_DIRS` and verifies a note can be retrieved by title)
+8. **Wake word** (checks whether the custom `"Adeola"` model is installed or still on the `"hey jarvis"` fallback)
+9. **Microphone** (checks for an active input device)
+10. **Offline** (verifies zero external network connections were made during checks 2–5)
+
+At the end it prints the **latency budget** line:
+
+```text
+LATENCY BUDGET: hear 0.42 s · think 1.10 s · speak 0.35 s · total 1.87 s
+```
+
+- `hear`: Whisper transcription time for the spoken test sentence
+- `think`: Ollama LLM reply time
+- `speak`: Kokoro synthesis time to first audio chunk
+- `total`: sum of the measured stages (end-to-end voice turn latency)
+
+Rule: **"Done" means preflight passed** (exit code `0`, zero `FAIL` checks).
 
 ## How it works
 
@@ -145,8 +199,11 @@ The eval never opens anything, it only reports what would have run.
 | `app/config.py` | Model, aliases (`"vs code"` → Visual Studio Code), site shortcuts |
 | `app/tools/applications.py` | Indexes Start menu apps (incl. Store apps) and fuzzy-matches names |
 | `app/tools/registry.py` | The approved tools and their schemas for the model |
-| `app/brain/router.py` | Fast path, then model fallback |
-| `app/brain/model.py` | Ollama calls: thinking off, temperature 0, model kept loaded |
+| `app/brain/router.py` | Fast path, notes lookup, then model fallback |
+| `app/brain/model.py` | Ollama calls: thinking off, temperature 0, model kept loaded, truncation retry |
+| `app/memory/store.py` | Local SQLite memory for facts, preferences, counters and recent activity |
+| `app/memory/notes.py` | Read-only markdown index and excerpt search over your Obsidian vault |
+| `tools/preflight.py` | Live end-to-end check with hear/think/speak latency budget and offline verification |
 
 ## Customising
 
@@ -158,4 +215,5 @@ The eval never opens anything, it only reports what would have run.
 
 2. Voice: ~~push-to-talk with faster-whisper~~, ~~spoken replies with a blended Kokoro voice~~ (done), ~~wake word~~ (done; train "Adeola" with [docs/wake_word.md](docs/wake_word.md))
 3. ~~Memory: SQLite for preferences and projects~~ (done)
-4. Android: FastAPI server reachable over Tailscale
+4. ~~Notes: read-only answers from your Obsidian vault with printed sources~~ (done)
+5. Android: FastAPI server reachable over Tailscale

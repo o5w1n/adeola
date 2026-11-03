@@ -29,7 +29,7 @@ class FakeBrain:
     def __init__(self):
         self.calls, self.reply, self.history = [], "", []
 
-    def decide(self, text, facts=None):
+    def decide(self, text, facts=None, notes=None):
         return self.calls, self.reply
 
     def remember(self, *_):

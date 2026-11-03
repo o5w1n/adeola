@@ -29,7 +29,7 @@ class FakeBrain:
     def __init__(self, calls=None, reply=""):
         self.calls, self.reply, self.seen, self.history = calls or [], reply, [], []
 
-    def decide(self, text, facts=None):
+    def decide(self, text, facts=None, notes=None):
         self.seen.append((text, facts))
         return self.calls, self.reply
 

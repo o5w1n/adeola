@@ -94,9 +94,9 @@ class Brain:
         self.client.chat(model=self.model, messages=[{"role": "user", "content": "hi"}],
                          keep_alive=config.KEEP_ALIVE, options=self._options(num_predict=1))
 
-    def _chat(self, messages: list[dict]):
+    def _chat(self, messages: list[dict], num_predict: int = config.MAX_OUTPUT_TOKENS):
         kwargs = dict(model=self.model, messages=messages, keep_alive=config.KEEP_ALIVE,
-                      options=self._options(num_predict=config.MAX_OUTPUT_TOKENS))
+                      options=self._options(num_predict=num_predict))
         if self.mode == "json":
             kwargs["format"] = self._schema
         else:
@@ -110,26 +110,42 @@ class Brain:
                 self._think_supported = False  # e.g. qwen2.5 has no thinking mode
         return self.client.chat(**kwargs)
 
-    def decide(self, text: str, facts: list[str] | None = None) -> tuple[list[tuple[str, dict]], str]:
-        """Return (tool calls, plain-text reply). One of them is usually empty.
-        `facts` are relevant things the user asked to be remembered."""
-        memory = ([{"role": "system", "content": "Things the user told you before (use only if "
-                    "relevant):\n" + "\n".join(f"- {f}" for f in facts)}] if facts else [])
-        messages = [{"role": "system", "content": self.system_prompt},
-                    *self.history[-2 * config.HISTORY_TURNS:],
-                    *memory,
-                    {"role": "user", "content": text}]
-        resp = self._chat(messages)
+    def _unpack(self, resp, retried: bool) -> str:
         msg = resp.message
         raw = msg.content or ""
         thinking = len(getattr(msg, "thinking", None) or "") + sum(map(len, _THINK_TAGS.findall(raw)))
         raw = _THINK_TAGS.sub("", raw).strip()
-        self.last_stats = _stats(resp, thinking, len(raw))
+        self.last_stats = {**_stats(resp, thinking, len(raw)), "retried": retried}
+        return raw
+
+    def decide(self, text: str, facts: list[str] | None = None,
+               notes: list[tuple[str, str]] | None = None) -> tuple[list[tuple[str, dict]], str]:
+        """Return (tool calls, plain-text reply). One of them is usually empty.
+        `facts` are relevant things the user asked to be remembered."""
+        memory = ([{"role": "system", "content": "Things the user told you before (use only if "
+                    "relevant):\n" + "\n".join(f"- {f}" for f in facts)}] if facts else [])
+        notes_msg = ([{"role": "system", "content": "Excerpts from the user's notes. Answer from "
+                       "them when relevant and name the note; if they don't cover the question, "
+                       "say so plainly:\n" + "\n\n".join(f"### {t}\n{x}" for t, x in notes)}]
+                     if notes else [])
+        messages = [{"role": "system", "content": self.system_prompt},
+                    *self.history[-2 * config.HISTORY_TURNS:],
+                    *memory,
+                    *notes_msg,
+                    {"role": "user", "content": text}]
+        resp = self._chat(messages)
+        raw = self._unpack(resp, retried=False)
 
         if self.mode == "tools":
             calls = [(tc.function.name, dict(tc.function.arguments or {}))
-                     for tc in (msg.tool_calls or [])]
+                     for tc in (resp.message.tool_calls or [])]
             return calls, raw
+        if getattr(resp, "done_reason", "") != "length":
+            calls, reply = self._parse_json(raw)
+            if not self.last_stats.get("parse_error"):
+                return calls, reply
+        resp = self._chat(messages, config.RETRY_OUTPUT_TOKENS)
+        raw = self._unpack(resp, retried=True)
         return self._parse_json(raw)
 
     def _parse_json(self, raw: str) -> tuple[list[tuple[str, dict]], str]:

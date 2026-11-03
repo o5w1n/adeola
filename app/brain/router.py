@@ -12,11 +12,13 @@ import time
 from dataclasses import dataclass, field
 
 from app import config
+from app.memory.notes import NotesIndex
 from app.tools.registry import Toolbox
 
 HELP_TEXT = ("I can open apps, websites and your projects, control music and volume, search the web, remember things "
-             "for you, tell you the time and lock your PC. Try: 'open Brave', 'open my Quail "
-             "project', 'remember my exam is on Friday', 'what do you remember' or "
+             "for you, answer from your notes, tell you the time and lock your PC. Try: 'open Brave', 'open my Quail "
+             "project', 'remember my exam is on Friday', 'what do you remember', "
+             "'what do my notes say about …' or "
              "'what was I doing earlier'. Say 'no more tips' to stop shortcut tips.")
 
 _POLITE = re.compile(r"^(?:(?:please|can you|could you|would you|hey)\s+)+|\s+(?:please|for me|now)$",
@@ -65,14 +67,20 @@ _TIPS_OFF = re.compile(r"^(?:no more tips|stop (?:the |giving me )?tips|turn (?:
 _TIPS_ON = re.compile(r"^(?:turn (?:on )?tips on|turn on (?:the )?tips|enable tips|give me tips again)$")
 _OPEN_PROJECT = re.compile(r"^(?:open|launch|start|load|work on|let's work on)(?: up)? "
                            r"(?:my |the )?(?:project )?(.+?)(?: project)$|^open project (.+)$")
+_NOTES_Q = re.compile(
+    r"^(?:what do(?:es)? my (?:notes|vault) say about|"
+    r"(?:check|search|look (?:in|through)) my (?:notes|vault)(?: for| about)?|"
+    r"(?:in|according to) my notes,?) (?:the )?(.+)$"
+)
 
 
 @dataclass
 class Result:
     reply: str
     calls: list[tuple[str, dict]] = field(default_factory=list)
-    source: str = "fast"     # "fast", "llm", "chat" or "none"
+    source: str = "fast"     # "fast", "llm", "chat", "notes", "error" or "none"
     ms: float = 0.0
+    sources: list[str] = field(default_factory=list)
 
 
 def clean(text: str, keep_case: bool = False) -> str:
@@ -88,9 +96,10 @@ def clean(text: str, keep_case: bool = False) -> str:
 
 
 class Router:
-    def __init__(self, toolbox: Toolbox, brain=None):
+    def __init__(self, toolbox: Toolbox, brain=None, notes: NotesIndex | None = None):
         self.toolbox = toolbox
         self.brain = brain
+        self.notes = notes
 
     def fast_parse(self, text: str, cased: str = "") -> list[tuple[str, dict]] | str | None:
         """Return tool calls, a direct reply string, or None if unsure.
@@ -159,6 +168,12 @@ class Router:
             return []
         return [f.text for f in mem.search(text, limit=config.MEMORY_IN_PROMPT)]
 
+    def notes_for(self, text: str, min_score: int = config.NOTES_MIN_SCORE) -> list[tuple[str, str]]:
+        if self.notes is None or config.NOTES_IN_PROMPT <= 0:
+            return []
+        matches = self.notes.search(text, limit=config.NOTES_IN_PROMPT, min_score=min_score)
+        return [(n.title, self.notes.excerpt(n, text)) for n in matches]
+
     def run_calls(self, calls: list[tuple[str, dict]]) -> str:
         return " ".join(filter(None, (self.toolbox.run(name, args) for name, args in calls)))
 
@@ -168,39 +183,78 @@ class Router:
         if not text:
             return Result("Yes?", source="fast")
 
-        # A pending "want me to remember that?" is answered by the very next command only.
-        if self.toolbox.pending_offer is not None:
-            if _KEEP.match(text) or _SKIP.match(text):
-                res = Result(self.toolbox.answer_offer(keep=bool(_KEEP.match(text))), source="fast")
+        try:
+            # A pending "want me to remember that?" is answered by the very next command only.
+            if self.toolbox.pending_offer is not None:
+                if _KEEP.match(text) or _SKIP.match(text):
+                    res = Result(self.toolbox.answer_offer(keep=bool(_KEEP.match(text))), source="fast")
+                    res.ms = (time.perf_counter() - start) * 1000
+                    return res
+                self.toolbox.pending_offer = None
+
+            if m := _NOTES_Q.match(text):
+                topic = m.group(1)
+                matched = self.notes_for(topic, min_score=1)
+                if not matched:
+                    res = Result(f"Your notes don't mention {topic}.", source="notes")
+                elif self.brain is None:
+                    titles = ", ".join(t for t, _ in matched)
+                    res = Result(f"Your notes on that: {titles}.", source="notes",
+                                 sources=[t for t, _ in matched])
+                else:
+                    try:
+                        calls, reply = self.brain.decide(
+                            clean(raw, keep_case=True), self.facts_for(text), notes=matched
+                        )
+                    except Exception as e:
+                        res = Result(f"I couldn't reach the local model ({e.__class__.__name__}). "
+                                     "Is Ollama running?", source="none")
+                    else:
+                        reply_text = reply or "Sorry, I'm not sure how to help with that."
+                        self.brain.remember(text, reply_text)
+                        res = Result(reply_text, calls, source="notes",
+                                     sources=[t for t, _ in matched])
                 res.ms = (time.perf_counter() - start) * 1000
                 return res
-            self.toolbox.pending_offer = None
 
-        parsed = self.fast_parse(text, clean(raw, keep_case=True))
-        if isinstance(parsed, str):
-            res = Result(parsed, source="fast")
-        elif parsed:
-            res = Result(self.run_calls(parsed), parsed, "fast")
+            parsed = self.fast_parse(text, clean(raw, keep_case=True))
+            if isinstance(parsed, str):
+                res = Result(parsed, source="fast")
+            elif parsed:
+                res = Result(self.run_calls(parsed), parsed, "fast")
+            else:
+                res = None
+        except Exception as e:
+            res = Result(f"Something went wrong ({e.__class__.__name__}). I'm still here.",
+                         source="error")
+
+        if res is not None:
+            pass
         elif self.brain is None:
             res = Result("I didn't catch that, and the model is offline.", source="none")
         else:
+            matched = self.notes_for(text)
             try:
-                calls, reply = self.brain.decide(clean(raw, keep_case=True), self.facts_for(text))
+                calls, reply = self.brain.decide(
+                    clean(raw, keep_case=True), self.facts_for(text), notes=matched
+                )
             except Exception as e:  # Ollama not running, model missing, etc.
                 res = Result(f"I couldn't reach the local model ({e.__class__.__name__}). "
                              "Is Ollama running?", source="none")
             else:
+                note_sources = [t for t, _ in matched] if reply else []
                 if calls and all(n == "offer_to_remember" for n, _ in calls):
                     # answer the question, then ask about keeping the fact
                     offer = self.run_calls(calls)
                     res = Result(" ".join(filter(None, [reply, offer])) or
-                                 "Sorry, I'm not sure how to help with that.", calls, "chat")
+                                 "Sorry, I'm not sure how to help with that.", calls, "chat",
+                                 sources=note_sources)
                 elif calls:
                     real = [c for c in calls if c[0] != "offer_to_remember"]
                     res = Result(self.run_calls(real), real, "llm")
                 else:
                     res = Result(reply or "Sorry, I'm not sure how to help with that.",
-                                 source="chat")
+                                 source="chat", sources=note_sources)
                 self.brain.remember(text, res.reply)
 
         res.ms = (time.perf_counter() - start) * 1000

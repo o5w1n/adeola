@@ -228,6 +228,8 @@ class Toolbox:
             return func(**clean)
         except OSError as e:
             return f"That didn't work: {e}"
+        except Exception as e:
+            return f"That didn't work ({e.__class__.__name__}: {e})."
 
 
 def _tool(tool_name: str, description: str, /, **params: str) -> dict:

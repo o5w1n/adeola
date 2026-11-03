@@ -11,6 +11,7 @@ import contextlib  # noqa: E402
 import io          # noqa: E402
 import unittest    # noqa: E402
 
+from app import config  # noqa: E402
 from app.brain.router import Router, clean  # noqa: E402
 from app.tools.applications import App, AppIndex  # noqa: E402
 from app.tools.registry import Toolbox  # noqa: E402
@@ -30,7 +31,7 @@ class FakeBrain:
     def __init__(self, calls=None, reply=""):
         self.calls, self.reply, self.seen, self.history = calls or [], reply, [], []
 
-    def decide(self, text, facts=None):
+    def decide(self, text, facts=None, notes=None):
         self.seen.append(text.lower())
         return self.calls, self.reply
 
@@ -63,6 +64,28 @@ class FakeOllama:
         msg = NS(content=self.content, tool_calls=self.tool_calls, thinking=None)
         return NS(message=msg, load_duration=5e6, prompt_eval_count=200,
                   prompt_eval_duration=1e8, eval_count=20, eval_duration=5e8)
+
+
+class SeqOllama:
+    """Returns queued Ollama responses and records each request's num_predict budget."""
+    def __init__(self, replies, done_reasons=None):
+        self.replies = list(replies)
+        self.done_reasons = list(done_reasons or [])
+        self.budgets = []
+
+    def chat(self, **kw):
+        from types import SimpleNamespace as NS
+        self.budgets.append(kw["options"]["num_predict"])
+        item = self.replies.pop(0) if len(self.replies) > 1 else self.replies[0]
+        if isinstance(item, tuple):
+            content, done_reason = item
+        else:
+            content = item
+            done_reason = self.done_reasons.pop(0) if self.done_reasons else "stop"
+        msg = NS(content=content, tool_calls=None, thinking=None)
+        return NS(message=msg, done_reason=done_reason, load_duration=5e6,
+                  prompt_eval_count=200, prompt_eval_duration=1e8,
+                  eval_count=20, eval_duration=5e8)
 
 
 class BrainTests(unittest.TestCase):
@@ -102,6 +125,47 @@ class BrainTests(unittest.TestCase):
         self.assertEqual(brain.decide("browse"), ([("open_app", {"name": "Brave"})], ""))
         self.assertIn("tools", client.kw)
         self.assertEqual(brain.last_stats["thinking_chars"], len("<think>hmm</think>"))
+
+    def test_truncated_json_is_retried_with_bigger_budget(self):
+        client = SeqOllama(['{"actions": [], "reply": "A long answer that got cu',
+                            '{"actions": [], "reply": "Full answer."}'])
+        brain = self.make(client, "json")
+        calls, reply = brain.decide("tell me about cats")
+        self.assertEqual(calls, [])
+        self.assertEqual(reply, "Full answer.")
+        self.assertEqual(client.budgets, [config.MAX_OUTPUT_TOKENS, config.RETRY_OUTPUT_TOKENS])
+        self.assertTrue(brain.last_stats["retried"])
+
+    def test_done_reason_length_triggers_retry(self):
+        client = SeqOllama(
+            [('{"actions": [], "reply": "Valid JSON but hit length limit."}', "length"),
+             ('{"actions": [], "reply": "Complete answer."}', "stop")]
+        )
+        brain = self.make(client, "json")
+        calls, reply = brain.decide("explain quantum physics")
+        self.assertEqual(calls, [])
+        self.assertEqual(reply, "Complete answer.")
+        self.assertEqual(len(client.budgets), 2)
+        self.assertEqual(client.budgets, [config.MAX_OUTPUT_TOKENS, config.RETRY_OUTPUT_TOKENS])
+        self.assertTrue(brain.last_stats["retried"])
+
+    def test_two_bad_replies_give_friendly_line_and_stop(self):
+        client = SeqOllama(["{bad", "{still bad"])
+        brain = self.make(client, "json")
+        _, reply = brain.decide("hi there")
+        self.assertIn("train of thought", reply)
+        self.assertEqual(len(client.budgets), 2)
+        self.assertTrue(brain.last_stats["retried"])
+        self.assertTrue(brain.last_stats["parse_error"])
+
+    def test_good_reply_is_not_retried(self):
+        client = SeqOllama(['{"actions": [], "reply": "Short and sweet."}'])
+        brain = self.make(client, "json")
+        calls, reply = brain.decide("say hi")
+        self.assertEqual(calls, [])
+        self.assertEqual(reply, "Short and sweet.")
+        self.assertEqual(len(client.budgets), 1)
+        self.assertFalse(brain.last_stats["retried"])
 
 
 class FastPathTests(unittest.TestCase):
@@ -170,7 +234,7 @@ class ModelPathTests(unittest.TestCase):
 
     def test_model_offline(self):
         class Broken(FakeBrain):
-            def decide(self, text, facts=None):
+            def decide(self, text, facts=None, notes=None):
                 raise ConnectionError
         res = run(Router(Toolbox(FAKE_APPS), Broken()), "do something clever")
         self.assertIn("Ollama", res.reply)

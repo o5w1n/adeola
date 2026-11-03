@@ -24,11 +24,20 @@ def is_noise(text: str) -> bool:
     return text.lower().strip(" .,!?") in _HALLUCINATIONS
 
 
+def load_whisper(name: str = config.STT_MODEL):
+    """Load Whisper from the local cache first; download only if not cached yet."""
+    from faster_whisper import WhisperModel
+    try:
+        return WhisperModel(name, device="cpu", compute_type="int8",
+                            cpu_threads=config.STT_THREADS, local_files_only=True)
+    except Exception:
+        return WhisperModel(name, device="cpu", compute_type="int8",
+                            cpu_threads=config.STT_THREADS)
+
+
 class Transcriber:
     def __init__(self, model: str = config.STT_MODEL):
-        from faster_whisper import WhisperModel
-        self.model = WhisperModel(model, device="cpu", compute_type="int8",
-                                  cpu_threads=config.STT_THREADS)
+        self.model = load_whisper(model)
         self.prompt = hint_prompt()
 
     def transcribe(self, audio: np.ndarray) -> str:

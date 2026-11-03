@@ -19,10 +19,17 @@ def parse_key(name: str):
     raise ValueError(f"Unknown push-to-talk key {name!r}. Try 'ctrl_r', 'alt_r' or 'f9'.")
 
 
+def _safe_beep(freq: int) -> None:
+    import winsound
+    try:
+        winsound.Beep(freq, 80)
+    except RuntimeError:
+        pass
+
+
 def beep(freq: int) -> None:
     if config.BEEPS and sys.platform == "win32":
-        import winsound
-        threading.Thread(target=winsound.Beep, args=(freq, 80), daemon=True).start()
+        threading.Thread(target=_safe_beep, args=(freq,), daemon=True).start()
 
 
 class PushToTalk:
@@ -85,6 +92,8 @@ class PushToTalk:
         with self.lock:
             result = self.router.handle(text)
         self.reply(result.reply)
+        if getattr(result, "sources", None):
+            self.say(f"   (from your notes: {', '.join(result.sources)})")
         if self.verbose:
             self.say(f"   [{seconds:.1f}s audio · speech-to-text {stt_ms:.0f} ms · "
                      f"{result.source} {result.ms:.0f} ms]")

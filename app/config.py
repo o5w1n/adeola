@@ -12,6 +12,7 @@ HISTORY_TURNS = 3       # past exchanges sent to the model for chat context
 # "tools": Ollama's native tool calling (more flexible, but small models write a lot).
 DECISION_MODE = os.getenv("ADEOLA_MODE", "json")
 MAX_OUTPUT_TOKENS = 150  # hard cap on how much the model may write per command
+RETRY_OUTPUT_TOKENS = 400  # larger cap used when retrying a truncated reply
 
 # --- Behaviour -------------------------------------------------------------
 # ADEOLA_DRY_RUN=1 prints actions instead of performing them (used by the eval).
@@ -125,3 +126,11 @@ SITE_SHORTCUTS = {
 
 # Generated speech is cached here so repeated replies play instantly (safe to delete).
 VOICE_CACHE_DIR = DATA_DIR / "voice_cache"
+
+# --- Notes -------------------------------------------------------------------
+NOTES_DIRS = [os.getenv("ADEOLA_NOTES", str(Path.home() / "Documents" / "qabw"))]
+NOTES_EXCLUDE = (".obsidian", ".trash", ".git", "Templates")   # folder names skipped anywhere
+NOTES_MAX_BYTES = 200_000     # skip bigger files (exports, pasted logs)
+NOTES_IN_PROMPT = 3           # excerpts sent to the model per question
+NOTES_EXCERPT_CHARS = 600
+NOTES_MIN_SCORE = 3           # below this a note isn't attached to a general question

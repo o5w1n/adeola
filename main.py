@@ -13,6 +13,7 @@ import threading
 from app import config
 from app.brain.model import Brain
 from app.brain.router import Router
+from app.memory.notes import NotesIndex
 from app.memory.store import Memory
 from app.tools.applications import AppIndex
 from app.tools.projects import Projects
@@ -26,8 +27,9 @@ def build(model: str = config.MODEL, use_model: bool = True) -> Router:
     apps = AppIndex()
     memory = Memory(config.MEMORY_DB)
     projects = Projects(memory)
+    notes = NotesIndex(config.NOTES_DIRS)
     brain = Brain(SCHEMAS, model=model) if use_model else None
-    return Router(Toolbox(apps, memory, projects), brain)
+    return Router(Toolbox(apps, memory, projects), brain, notes)
 
 
 # Short replies she says often. Generated in the background at startup so they play instantly.
@@ -103,6 +105,8 @@ def start_voice(router: Router, lock: threading.Lock, verbose: bool, speaker=Non
 
 
 def main() -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")
     parser = argparse.ArgumentParser(description=f"{N}, your local assistant")
     parser.add_argument("--model", default=config.MODEL)
     parser.add_argument("--no-model", action="store_true", help="fast path only")
@@ -114,8 +118,10 @@ def main() -> None:
     print(f"{N}: Indexing your apps...")
     router = build(args.model, not args.no_model)
     tb = router.toolbox
-    print(f"{N}: Found {len(tb.apps.apps)} apps and {len(tb.projects.all())} projects; "
-          f"I remember {len(tb.memory.facts())} things.")
+    print(f"{N}: Found {len(tb.apps.apps)} apps, {len(tb.projects.all())} projects and "
+          f"{len(router.notes.notes)} notes; I remember {len(tb.memory.facts())} things.")
+    if router.notes.missing:
+        print(f"   (Notes folder not found: {', '.join(str(p) for p in router.notes.missing)})")
 
     if router.brain:
         try:
@@ -152,12 +158,16 @@ def main() -> None:
         if text.lower() in ("reload apps", "reload"):
             router.toolbox.apps = AppIndex()
             router.toolbox.projects.reload()
-            print(f"{N}: Re-indexed, {len(router.toolbox.apps.apps)} apps and "
-                  f"{len(router.toolbox.projects.all())} projects.")
+            router.notes.load()
+            print(f"{N}: Re-indexed, {len(router.toolbox.apps.apps)} apps, "
+                  f"{len(router.toolbox.projects.all())} projects and "
+                  f"{len(router.notes.notes)} notes.")
             continue
         with lock:
             result = router.handle(text)
         print(f"{N}: {result.reply}")
+        if result.sources:
+            print(f"   (from your notes: {', '.join(result.sources)})")
         if speaker:
             speaker.stop()           # a new command replaces anything still being said
             speaker.say(result.reply)
