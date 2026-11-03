@@ -182,6 +182,16 @@ class RouterNotesTests(unittest.TestCase):
         self.assertFalse(brain.seen_notes[0])
         self.assertEqual(res.sources, [])
 
+    def test_generic_command_words_do_not_attach_notes(self):
+        (self.tmp / "Coding Log.md").write_text(
+            "Sometimes people want to write some code and open their editor today.",
+            encoding="utf-8",
+        )
+        self.idx.load()
+        brain = FakeBrain(calls=[("open_app", {"name": "Visual Studio Code"})])
+        run(Router(self.tb, brain, self.idx), "I want to write some code")
+        self.assertEqual(brain.seen_notes[0], [])
+
     def test_tool_turns_never_carry_sources(self):
         brain = FakeBrain(calls=[("open_app", {"name": "notepad"})])
         self.assertEqual(

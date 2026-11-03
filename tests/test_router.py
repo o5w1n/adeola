@@ -198,6 +198,14 @@ class BrainTests(unittest.TestCase):
         brain = self.make(FakeOllama(), "json")
         self.assertIsNone(brain.start_keep_warm(0))
 
+    def test_warm_up_caches_system_prompt_and_schema(self):
+        client = FakeOllama()
+        brain = self.make(client, "json")
+        brain.warm_up()
+        self.assertEqual(client.kw["messages"][0]["content"], brain.system_prompt)
+        self.assertIn("properties", client.kw["format"])
+        self.assertEqual(client.kw["options"]["num_predict"], 1)
+
     def test_switch_model_updates_model_and_rolls_back_on_error(self):
         client = FakeOllama()
         brain = self.make(client, "json")

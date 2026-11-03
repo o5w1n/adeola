@@ -14,6 +14,11 @@ from app.memory.store import words
 _FRONTMATTER_RE = re.compile(r"\A---\r?\n.*?\r?\n---\r?\n?", re.DOTALL)
 _WIKILINK_ALIAS_RE = re.compile(r"\[\[([^\]|]+)\|([^\]]+)\]\]")
 _WIKILINK_PLAIN_RE = re.compile(r"\[\[([^\]]+)\]\]")
+_GENERIC_QUERY_WORDS = frozenset("""
+want wants need needs some more much many very also too now today here there make made use used
+using get got give take let lets like good best new way time help open start run launch write
+work working code app apps editor file files folder pc computer laptop
+""".split())
 
 
 def _clean_markdown(raw: str) -> str:
@@ -101,7 +106,8 @@ class NotesIndex:
         min_score: int = config.NOTES_MIN_SCORE,
     ) -> list[Note]:
         """Return up to `limit` notes scoring at least `min_score` against `query`."""
-        q = words(query)
+        raw_q = words(query)
+        q = raw_q if min_score <= 1 else (raw_q - _GENERIC_QUERY_WORDS)
         if not q:
             return []
         scored: list[tuple[int, int, str, Note]] = []

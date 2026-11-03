@@ -254,14 +254,15 @@ class Speaker:
     def warm_up(self) -> None:
         self.synth("Hi.")
 
-    def prewarm(self, replies: list[str], idle_seconds: float = 2.0) -> threading.Thread:
+    def prewarm(self, replies: list[str], idle_seconds: float = 8.0) -> threading.Thread:
         """Generate likely replies in the background, only while Adeola is idle."""
         def work():
             for reply in replies:
                 for chunk in speech_chunks(speech_text(reply)):
                     if not AudioCache.cacheable(chunk) or self.cache.get(self._key(chunk)):
                         continue
-                    while self.speaking or time.monotonic() - self._last_request < idle_seconds:
+                    while (self.speaking or not self._queue.empty()
+                           or time.monotonic() - self._last_request < idle_seconds):
                         time.sleep(0.2)            # live speech always goes first
                     try:
                         self.synth_cached(chunk)

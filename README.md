@@ -41,7 +41,7 @@ Two ways to talk, both on with `--voice`:
 - **Wake word:** say "Adeola, open Brave". Until you've trained her name
   ([docs/wake_word.md](docs/wake_word.md)), the test phrase is "hey jarvis".
 - **Push-to-talk:** hold **Right Ctrl**, speak, release.
-- **Mid-sentence pause window:** after `END_SILENCE_SECONDS` (0.8 s) of quiet, Adeola waits an extra `FINISH_SECONDS` (0.7 s) before ending capture. If you keep speaking after a brief breath or pause, she resumes listening seamlessly instead of cutting you off.
+- **Mid-sentence pause window:** after `END_SILENCE_SECONDS` (0.6 s) of quiet, Adeola waits an extra `FINISH_SECONDS` (0.35 s) before ending capture. If you keep speaking after a brief breath or pause, she resumes listening seamlessly instead of cutting you off. If she cuts you off mid-thought, raise these in `config.py`.
 - **Voice barge-in:** while Adeola is speaking, wake-word detection stays active at a higher threshold (`BARGE_IN_THRESHOLD = 0.75`). Saying her wake word ("Adeola, stop" or "Adeola, wait") cuts off playback immediately and captures your new command.
 
 A high beep means she's listening, a low one means she stopped. Typing still works at the same time.

@@ -126,9 +126,8 @@ class Brain:
 
     def warm_up(self) -> None:
         """Load the model into GPU memory with the same settings real calls use."""
-        self.client.chat(model=self.model, messages=[{"role": "user", "content": "hi"}],
-                         keep_alive=config.KEEP_ALIVE, options=self._options(num_predict=1))
-        self._last_call = time.monotonic()
+        self._chat([{"role": "system", "content": self.system_prompt},
+                    {"role": "user", "content": "hi"}], num_predict=1)
 
     def ping_if_idle(self, idle_seconds: float) -> bool:
         """Ping Ollama to keep the model warm if no call has happened in `idle_seconds`."""

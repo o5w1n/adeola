@@ -175,6 +175,10 @@ def main() -> int:
 
     with ConnectionLog() as net_log:
         brain = Brain(SCHEMAS)
+        try:
+            brain.warm_up()
+        except Exception:
+            pass
 
         # 2. Brain, tool choice
         def check_tool_choice() -> str:
