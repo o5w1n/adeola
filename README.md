@@ -150,6 +150,25 @@ Switch local Ollama models (`BRAINS` in `config.py`) or Kokoro voice blends (`VO
 - **Voices:** `which voice are you using` · `use your calm voice` · `switch to your warm voice`
 - **Local honesty:** `do you cost anything` · `are you local` · `what needs the internet`
 
+## Android & Tailscale (`--serve`)
+
+Run Adeola's local HTTP server alongside the terminal or voice loop so you can reach her from your Android phone over Tailscale:
+
+```powershell
+python main.py --serve              # text + HTTP server on port 8765
+python main.py --voice --serve      # PC voice + Android companion
+python main.py --serve --port 9000  # custom port
+```
+
+- **Mobile Web / PWA companion:** open `http://<tailscale-ip>:8765` in Chrome or Brave on Android (Adeola prints the detected `100.x.y.z` Tailscale URL at startup) and tap **Add to Home screen**. Includes a text composer, **Hold to Talk** push-to-talk (16-bit PCM WAV → Whisper → Kokoro audio reply on your phone), quick-action chips, and Quick/Smart/Coder brain shelf pills.
+- **Optional security token:** set `$env:ADEOLA_TOKEN = "your-secret"` before starting. Pass `?token=your-secret` once in the mobile browser URL (saved in `localStorage`), or send `Authorization: Bearer <token>` / `X-Adeola-Token: <token>` on API calls.
+- **JSON API endpoints:**
+  - `GET /api/status` — active brain, model, voice, and indexed counts (`apps`, `projects`, `notes`, `facts`)
+  - `POST /api/chat` — `{"text": "...", "speak_on_pc": false, "return_audio": false}` → reply, route source, tool calls, note sources, and optional base64 WAV audio
+  - `POST /api/voice` — `{"audio_wav": "<base64>", "speak_on_pc": false, "return_audio": true}` (or raw `audio/wav` body) → Whisper transcript + routed reply + optional base64 WAV audio
+  - `GET /api/notes?q=<query>` — top matching Obsidian vault note titles, folders, and excerpts
+  - `POST /api/remember` — `{"text": "..."}` → saves a memory fact and markdown capture
+
 ## Test
 
 ```powershell
@@ -213,6 +232,7 @@ Rule: **"Done" means preflight passed** (exit code `0`, zero `FAIL` checks).
 | `app/brain/model.py` | Ollama calls: thinking off, temperature 0, model kept loaded, truncation retry |
 | `app/memory/store.py` | Local SQLite memory for facts, preferences, counters and recent activity |
 | `app/memory/notes.py` | Read-only markdown index and excerpt search over your Obsidian vault |
+| `app/server.py` | Zero-dependency HTTP/Tailscale API server and mobile PWA companion (`--serve`) |
 | `tools/preflight.py` | Live end-to-end check with hear/think/speak latency budget and offline verification |
 
 ## Customising
@@ -226,4 +246,4 @@ Rule: **"Done" means preflight passed** (exit code `0`, zero `FAIL` checks).
 2. Voice: ~~push-to-talk with faster-whisper~~, ~~spoken replies with a blended Kokoro voice~~ (done), ~~wake word~~ (done; train "Adeola" with [docs/wake_word.md](docs/wake_word.md))
 3. ~~Memory: SQLite for preferences and projects~~ (done)
 4. ~~Notes: read-only answers from your Obsidian vault with printed sources~~ (done)
-5. Android: FastAPI server reachable over Tailscale
+5. ~~Android: HTTP server reachable over Tailscale~~ (done)

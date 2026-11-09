@@ -8,12 +8,14 @@ the current one plays. Pressing the push-to-talk key cuts speech off.
 from __future__ import annotations
 
 import collections
+import io
 import queue
 import re
 import sys
 import threading
 import time
 import urllib.request
+import wave
 from pathlib import Path
 
 import numpy as np
@@ -377,6 +379,36 @@ class Speaker:
         audio, rate = self.synth(chunk)
         self.cache.put(key, audio, rate)
         return audio, rate, False
+
+    def _synth(self, chunk: str) -> tuple[np.ndarray, int]:
+        audio, rate, _ = self.synth_cached(chunk)
+        return np.asarray(audio, dtype=np.float32), int(rate)
+
+    def synthesize_wav(self, text: str) -> bytes:
+        """Synthesize speech into a mono 16-bit PCM WAV byte buffer for remote clients."""
+        cleaned = speech_text(text) if text else ""
+        chunks = speech_chunks(cleaned) if cleaned else []
+        rate = 24000
+        parts: list[np.ndarray] = []
+        pause_ms = getattr(config, "SENTENCE_PAUSE_MS", 120)
+        for idx, chunk in enumerate(chunks):
+            arr, chunk_rate = self._synth(chunk)
+            rate = int(chunk_rate) if chunk_rate else rate
+            parts.append(np.asarray(arr, dtype=np.float32).reshape(-1))
+            if idx < len(chunks) - 1 and chunk.rstrip().endswith((".", "!", "?")) and pause_ms > 0:
+                parts.append(np.zeros(int(rate * pause_ms / 1000), dtype=np.float32))
+        if not parts:
+            audio = np.zeros(int(rate * 0.1), dtype=np.float32)
+        else:
+            audio = np.concatenate(parts)
+        pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype("<i2")
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(rate)
+            wf.writeframes(pcm.tobytes())
+        return buf.getvalue()
 
     def warm_up(self) -> None:
         self.synth("Hi.")

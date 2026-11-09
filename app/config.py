@@ -153,3 +153,9 @@ NOTES_MAX_BYTES = 200_000     # skip bigger files (exports, pasted logs)
 NOTES_IN_PROMPT = 3           # excerpts sent to the model per question
 NOTES_EXCERPT_CHARS = 600
 NOTES_MIN_SCORE = 3           # below this a note isn't attached to a general question
+
+# --- Remote server (Phase 5: Android / Tailscale) -----------------------------
+SERVER_HOST = os.getenv("ADEOLA_HOST", "0.0.0.0")
+SERVER_PORT = int(os.getenv("ADEOLA_PORT", "8765"))
+SERVER_TOKEN = os.getenv("ADEOLA_TOKEN", "")
+

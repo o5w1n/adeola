@@ -3,6 +3,7 @@
 Run:  python main.py              type commands
       python main.py --voice      also speak: say the wake word, or hold Right Ctrl; Adeola answers out loud
       python main.py --speak      type commands, hear the replies
+      python main.py --serve      run HTTP/Tailscale server for Android companion
       add -v to see which path handled each command and how long it took
 """
 
@@ -104,6 +105,25 @@ def start_voice(router: Router, lock: threading.Lock, verbose: bool, speaker=Non
     return ptt, recorder
 
 
+def start_server(
+    router: Router,
+    lock: threading.Lock,
+    speaker=None,
+    transcriber=None,
+    port: int = config.SERVER_PORT,
+):
+    """Start the HTTP/Tailscale server in the background."""
+    from app.server import AdeolaServer, tailscale_ip
+
+    srv = AdeolaServer(router, lock=lock, speaker=speaker, transcriber=transcriber, port=port)
+    srv.start()
+    print(f"{N}: Server live at http://127.0.0.1:{port}")
+    ts_ip = tailscale_ip()
+    if ts_ip:
+        print(f"{N}: Tailscale (Android): http://{ts_ip}:{port}")
+    return srv
+
+
 def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="replace")
@@ -112,6 +132,8 @@ def main() -> None:
     parser.add_argument("--no-model", action="store_true", help="fast path only")
     parser.add_argument("--voice", action="store_true", help="enable push-to-talk")
     parser.add_argument("--speak", action="store_true", help="say replies out loud")
+    parser.add_argument("--serve", action="store_true", help="run HTTP/Tailscale server for Android companion")
+    parser.add_argument("--port", type=int, default=config.SERVER_PORT, help="HTTP server port (default 8765)")
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args()
 
@@ -147,6 +169,16 @@ def main() -> None:
         except Exception as e:
             print(f"{N}: Voice couldn't start ({e.__class__.__name__}: {e}). Typing still works.")
 
+    server = None
+    if args.serve:
+        server = start_server(
+            router,
+            lock,
+            speaker=speaker,
+            transcriber=voice[0].transcriber if voice else None,
+            port=args.port,
+        )
+
     print(f"{N}: Online. Type 'help' for ideas or 'exit' to quit.")
     while True:
         try:
@@ -177,6 +209,8 @@ def main() -> None:
         if args.verbose:
             print(f"   [{result.source}, {result.ms:.0f} ms, calls={result.calls}]")
 
+    if server:
+        server.stop()
     if speaker:
         speaker.stop()
     if voice:
