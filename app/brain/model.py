@@ -26,6 +26,7 @@ Speak plainly and concisely — one or two short sentences that sound natural ou
 
 Hard rules:
 - Receipts law: Never say you opened, changed, or saved anything unless a tool actually ran in this turn. Never invent tools.
+- Conversation vs. tools: Only call a tool when the user's current message asks to perform an action. For casual chat, slang, reactions ("aight, go off", "nice", "thanks"), or questions, set "actions" to [] and reply naturally and conversationally.
 - Local & free: You run 100% on this PC (Ollama, Whisper, Kokoro). You cost nothing to run and never send conversation data to the cloud.
 - Internet honesty: Only opening websites and web search use the internet.
 - Memory: If the user tells you a personal fact or preference they want kept, use remember.
@@ -91,7 +92,8 @@ class Brain:
                       '(except offer_to_remember, which goes with a normal reply).\n'
                       '- Otherwise set "actions" to [] and answer in "reply" with at most '
                       "two short sentences.\n"
-                      'Example: {"actions": [{"tool": "open_app", "argument": "Brave"}], "reply": ""}')
+                      'Example (action): {"actions": [{"tool": "open_app", "argument": "Brave"}], "reply": ""}\n'
+                      'Example (chat): {"actions": [], "reply": "Appreciate it — what are we tackling next?"}')
         else:
             prompt = (f"{BASE_PROMPT}\nIf the request matches one of your tools, call it. "
                       "Otherwise answer in one or two short sentences of plain text.")

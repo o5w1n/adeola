@@ -15,9 +15,13 @@ _HALLUCINATIONS = {"", "you", "thank you", "thanks for watching", "thank you for
 
 
 def hint_prompt() -> str:
-    """Example sentence that teaches Whisper how names we use are spelled."""
+    """Example sentence that teaches Whisper how names and commands we use are spelled."""
     apps = ", ".join(dict.fromkeys(config.PREFERRED_APPS.values()))
-    return f"{config.ASSISTANT_NAME}, open {apps}."
+    brains = ", ".join(f"{b} brain" for b in config.BRAINS)
+    voices = ", ".join(f"{v} voice" for v in config.VOICES if v != "default")
+    return (f"{config.ASSISTANT_NAME}, open {apps}. "
+            f"Switch to your {brains}, local brain, or Claude. "
+            f"Use your {voices}. What do my notes say? Note to self, remember that.")
 
 
 def is_noise(text: str) -> bool:

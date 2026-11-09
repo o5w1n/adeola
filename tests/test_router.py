@@ -239,9 +239,12 @@ class BrainTests(unittest.TestCase):
         self.assertLessEqual(len(BASE_PROMPT.split()), 300)
         self.assertIn("Receipts law", BASE_PROMPT)
         self.assertIn("cost nothing", BASE_PROMPT)
+        self.assertIn("Conversation vs. tools:", BASE_PROMPT)
         b1 = self.make(FakeOllama(), "json")
         b2 = self.make(FakeOllama(), "json")
         self.assertEqual(b1.system_prompt, b2.system_prompt)
+        self.assertIn("Example (action):", b1.system_prompt)
+        self.assertIn("Example (chat):", b1.system_prompt)
 
 
 class FastPathTests(unittest.TestCase):
@@ -314,6 +317,53 @@ class FastPathTests(unittest.TestCase):
         res = run(self.router, "use your calm voice")
         self.assertEqual(res.source, "fast")
         self.assertIn("Voice is off right now, but 'calm' is available", res.reply)
+        self.assertEqual(self.brain.seen, [])
+
+    def test_flexible_spoken_brain_and_app_routing(self):
+        res = run(self.router, "switch to quick")
+        self.assertEqual(res.source, "fast")
+        self.assertEqual(self.brain.model, "qwen3:1.7b")
+        self.assertIn("Switched to my quick brain (qwen3:1.7b).", res.reply)
+
+        res = run(self.router, "switch to coder")
+        self.assertEqual(res.source, "fast")
+        self.assertEqual(self.brain.model, "qwen2.5-coder:3b")
+        self.assertIn("Switched to my coder brain (qwen2.5-coder:3b).", res.reply)
+
+        res = run(self.router, "switch to smart")
+        self.assertEqual(res.source, "fast")
+        self.assertEqual(self.brain.model, "qwen3:4b")
+        self.assertIn("Switched to my smart brain (qwen3:4b).", res.reply)
+
+        res = run(self.router, "switch to your coding brain")
+        self.assertEqual(res.source, "fast")
+        self.assertEqual(self.brain.model, "qwen2.5-coder:3b")
+
+        res = run(self.router, "switch to quik brain")
+        self.assertEqual(res.source, "fast")
+        self.assertEqual(self.brain.model, "qwen3:1.7b")
+
+        self.router.handle("switch to quick")
+        res = run(self.router, "Adeola, switch to your lookout, Brave")
+        self.assertEqual(res.source, "fast")
+        self.assertEqual(self.brain.model, "qwen3:4b")
+        self.assertEqual(res.reply, "All local: smart brain (qwen3:4b).")
+
+        self.router.handle("switch to quick")
+        res = run(self.router, "switch to your lookout brain")
+        self.assertEqual(res.source, "fast")
+        self.assertEqual(self.brain.model, "qwen3:4b")
+        self.assertEqual(res.reply, "All local: smart brain (qwen3:4b).")
+
+        res = run(self.router, "switch to Brave")
+        self.assertEqual(res.source, "fast")
+        self.assertEqual(res.calls, [("open_app", {"name": "brave"})])
+        self.assertEqual(res.reply, "Opening Brave.")
+
+        res = run(self.router, "Visual Switch to Code")
+        self.assertEqual(res.source, "fast")
+        self.assertEqual(res.calls, [("open_app", {"name": "code"})])
+        self.assertEqual(res.reply, "Opening Visual Studio Code.")
         self.assertEqual(self.brain.seen, [])
 
     def test_cloud_honesty_go_local_and_preload_notice(self):
@@ -396,6 +446,146 @@ class ModelPathTests(unittest.TestCase):
                 raise ConnectionError
         res = run(Router(Toolbox(FAKE_APPS), Broken()), "do something clever")
         self.assertIn("Ollama", res.reply)
+
+    def test_casual_banter_and_acknowledgements_do_not_open_apps(self):
+        from app.brain.router import ACK_REPLIES
+
+        # 1. Fast-path acknowledgements and slang rotate through ACK_REPLIES without calling the LLM
+        brain = FakeBrain([("open_app", {"name": "Visual Studio Code"})])
+        router = Router(Toolbox(FAKE_APPS), brain)
+        for i, phrase in enumerate(("thanks", "aight, go off", "aigh, go iff", "appreciate it")):
+            res = run(router, phrase)
+            self.assertEqual(res.source, "fast", phrase)
+            self.assertEqual(res.calls, [], phrase)
+            self.assertEqual(res.reply, ACK_REPLIES[i % len(ACK_REPLIES)], phrase)
+        self.assertEqual(brain.seen, [])
+
+        # 2. Spurious open_app call on casual banter without action intent is blocked on the LLM path
+        spurious_router = Router(
+            Toolbox(FAKE_APPS),
+            FakeBrain([("open_app", {"name": "Visual Studio Code"})], reply=""),
+        )
+        res = run(spurious_router, "haha that is wild")
+        self.assertEqual(res.source, "chat")
+        self.assertEqual(res.calls, [])
+        self.assertEqual(res.reply, ACK_REPLIES[0])
+
+        spurious_with_reply = Router(
+            Toolbox(FAKE_APPS),
+            FakeBrain([("open_app", {"name": "Visual Studio Code"})], reply="Haha right?"),
+        )
+        res_reply = run(spurious_with_reply, "haha that is wild")
+        self.assertEqual(res_reply.source, "chat")
+        self.assertEqual(res_reply.calls, [])
+        self.assertEqual(res_reply.reply, "Haha right?")
+
+        # 3. Legitimate intent phrases still execute open_app on the LLM path
+        code_router = Router(
+            Toolbox(FAKE_APPS),
+            FakeBrain([("open_app", {"name": "Visual Studio Code"})]),
+        )
+        res_code = run(code_router, "I want to write some code")
+        self.assertEqual(res_code.source, "llm")
+        self.assertEqual(res_code.calls, [("open_app", {"name": "Visual Studio Code"})])
+        self.assertEqual(res_code.reply, "Opening Visual Studio Code.")
+
+        music_router = Router(
+            Toolbox(FAKE_APPS),
+            FakeBrain([("open_app", {"name": "Spotify"})]),
+        )
+        res_music = run(music_router, "let's listen to music")
+        self.assertEqual(res_music.source, "llm")
+        self.assertEqual(res_music.calls, [("open_app", {"name": "Spotify"})])
+        self.assertEqual(res_music.reply, "Opening Spotify.")
+
+
+class LaunchDetachedTests(unittest.TestCase):
+    def test_clean_launch_env_strips_vscode_and_electron_vars(self):
+        from app.tools.applications import clean_launch_env
+
+        raw = {
+            "PATH": "C:\\Windows",
+            "VSCODE_IPC_HOOK_CLI": "pipe",
+            "VSCODE_PID": "123",
+            "vscode_lower": "val",
+            "ELECTRON_RUN_AS_NODE": "1",
+            "NODE_OPTIONS": "--inspect",
+            "CHROME_DESKTOP": "code.desktop",
+            "GDK_PIXBUF_MODULE_FILE": "/tmp/loaders",
+        }
+        cleaned = clean_launch_env(raw)
+        self.assertEqual(cleaned, {"PATH": "C:\\Windows"})
+        self.assertIn("VSCODE_PID", raw)  # does not mutate caller dict
+
+    def test_launch_and_open_project_use_detached_popen_with_devnull_and_clean_env(self):
+        from pathlib import Path
+        import subprocess
+        from unittest.mock import patch
+        from app.tools.applications import launch
+        from app.tools.projects import Project, open_project
+
+        fake_env = {
+            "PATH": "C:\\Windows",
+            "VSCODE_IPC_HOOK_CLI": "pipe",
+            "ELECTRON_RUN_AS_NODE": "1",
+            "NODE_OPTIONS": "--require cache.js",
+        }
+        expected_flags = (
+            getattr(subprocess, "DETACHED_PROCESS", 0)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        )
+
+        with (
+            patch.object(config, "DRY_RUN", False),
+            patch("app.tools.applications.sys.platform", "win32"),
+            patch("app.tools.projects.sys.platform", "win32"),
+            patch.dict(os.environ, fake_env, clear=True),
+            patch("subprocess.Popen") as mock_popen,
+        ):
+            launch("shell:AppsFolder\\Microsoft.VisualStudioCode")
+            mock_popen.assert_called_once()
+            args, kwargs = mock_popen.call_args
+            self.assertEqual(
+                args[0],
+                ["cmd.exe", "/c", "start", "", "shell:AppsFolder\\Microsoft.VisualStudioCode"],
+            )
+            self.assertEqual(kwargs["stdin"], subprocess.DEVNULL)
+            self.assertEqual(kwargs["stdout"], subprocess.DEVNULL)
+            self.assertEqual(kwargs["stderr"], subprocess.DEVNULL)
+            self.assertEqual(kwargs["creationflags"], expected_flags)
+            self.assertTrue(kwargs["close_fds"])
+            self.assertNotIn("VSCODE_IPC_HOOK_CLI", kwargs["env"])
+            self.assertNotIn("ELECTRON_RUN_AS_NODE", kwargs["env"])
+            self.assertNotIn("NODE_OPTIONS", kwargs["env"])
+            self.assertEqual(kwargs["env"].get("PATH"), "C:\\Windows")
+
+            mock_popen.reset_mock()
+            proj = Project("Adeola", Path("C:\\Projects\\Adeola"), "vs code")
+            with patch("app.tools.projects.opener_command", return_value=["code.cmd", "C:\\Projects\\Adeola"]):
+                msg = open_project(proj)
+            self.assertEqual(msg, "Opening your Adeola project in VS Code.")
+            mock_popen.assert_called_once()
+            args, kwargs = mock_popen.call_args
+            self.assertEqual(args[0], ["code.cmd", "C:\\Projects\\Adeola"])
+            self.assertEqual(kwargs["stdin"], subprocess.DEVNULL)
+            self.assertEqual(kwargs["stdout"], subprocess.DEVNULL)
+            self.assertEqual(kwargs["stderr"], subprocess.DEVNULL)
+            self.assertEqual(kwargs["creationflags"], expected_flags)
+            self.assertTrue(kwargs["close_fds"])
+            self.assertNotIn("VSCODE_IPC_HOOK_CLI", kwargs["env"])
+
+            mock_popen.reset_mock()
+            with patch("app.tools.projects.opener_command", return_value=None):
+                msg_fallback = open_project(proj)
+            self.assertEqual(msg_fallback, "Opening your Adeola project in File Explorer.")
+            mock_popen.assert_called_once()
+            args, kwargs = mock_popen.call_args
+            self.assertEqual(
+                args[0],
+                ["cmd.exe", "/c", "start", "", "C:\\Projects\\Adeola"],
+            )
+            self.assertEqual(kwargs["stdout"], subprocess.DEVNULL)
 
 
 if __name__ == "__main__":

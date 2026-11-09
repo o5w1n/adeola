@@ -142,7 +142,12 @@ class WakeWord:
         else:
             self._quiet += BLOCK_SECONDS
 
-        if not self._heard_speech and self._elapsed >= config.NO_SPEECH_TIMEOUT:
+        timeout = (
+            config.FOLLOWUP_SPEECH_TIMEOUT
+            if (self._awaiting_followup and config.NO_SPEECH_TIMEOUT >= 3.0)
+            else config.NO_SPEECH_TIMEOUT
+        )
+        if not self._heard_speech and self._elapsed >= timeout:
             beep(440)
             self.say("   (didn't hear a command)")
             self._awaiting_followup = False
@@ -182,9 +187,14 @@ class WakeWord:
             reply = self.handle_audio(audio)
         finally:
             if reply == "Yes?" and not self._awaiting_followup:
-                deadline = time.monotonic() + 3.0
-                while self.speaker and self.speaker.speaking and time.monotonic() < deadline:
-                    time.sleep(0.02)
+                if self.speaker is not None:
+                    if hasattr(self.speaker, "wait_until_done"):
+                        self.speaker.wait_until_done()
+                    deadline = time.monotonic() + 3.0
+                    while getattr(self.speaker, "speaking", False) and time.monotonic() < deadline:
+                        time.sleep(0.02)
+                    if not config.DRY_RUN and config.FOLLOWUP_SETTLE_SECONDS > 0:
+                        time.sleep(config.FOLLOWUP_SETTLE_SECONDS)
                 self._awaiting_followup = True
                 self.detector.reset()
                 self._preroll.clear()

@@ -24,7 +24,10 @@ HELP_TEXT = ("I can open apps, websites and your projects, control music and vol
 
 _POLITE = re.compile(r"^(?:(?:please|can you|could you|would you|hey)\s+)+|\s+(?:please|for me|now)$",
                      re.IGNORECASE)
-_OPEN = re.compile(r"^(?:open|launch|start|run|fire up|bring up|pull up)\s+(.+)$")
+_OPEN = re.compile(r"^(?:open|launch|start|run|fire up|bring up|pull up|switch to|go to)\s+(.+)$")
+_OPEN_INVERTED = re.compile(
+    r"^([\w]+)\s+(?:open|launch|switch to|go to)\s+(?:your\s+|my\s+|the\s+)?(.+)$"
+)
 _SEARCH = re.compile(
     r"^(?:search|google|look up)(?:\s+(?:the web|online|the internet))?(?:\s+for)?\s+(.+?)"
     r"(?:\s+on\s+(?:google|the web|the internet|brave))?$")
@@ -41,6 +44,28 @@ GREETING_REPLIES = (
     "Hi! Ready when you are.",
     "Hey there — what are we working on?",
 )
+_THANKS_ACK = re.compile(
+    r"^(?:thanks|thank you|thx|ty|appreciate it|much appreciated|"
+    r"nice|nice one|cool|sweet|awesome|great|good job|well done|"
+    r"bet|aight|aigh|alright|got it|makes sense|fair enough|dope|solid)"
+    r"(?:[\s,]+(?:adeola|bro|man|fam|go off|go iff))?$"
+)
+ACK_REPLIES = (
+    "Anytime — what's next?",
+    "You got it.",
+    "Always ready. What are we doing next?",
+)
+_ACTION_HINTS = {
+    "open", "launch", "start", "run", "fire", "bring", "pull", "switch", "go",
+    "play", "pause", "resume", "stop", "skip", "next", "previous", "volume",
+    "mute", "unmute", "louder", "quieter", "search", "google", "look", "find",
+    "time", "date", "day", "lock", "remember", "note", "save", "log", "forget",
+    "recall", "project", "projects", "work", "write", "code", "coding", "browse",
+    "browser", "internet", "web", "music", "song", "listen", "watch", "video",
+    "terminal", "command", "files", "folder", "notes", "calculator", "calc",
+    "settings", "notepad", "brave", "spotify", "chrome", "studio",
+}
+_DESKTOP_ACTION_TOOLS = {"open_app", "open_url", "open_project", "lock_pc", "web_search"}
 _HONESTY_LOCAL = re.compile(
     r"^(?:do you (?:cost anything|run locally|run offline|use the cloud|need (?:the )?internet|send data)"
     r"|are you (?:local|offline|free|private)|where do you run|how much do you cost)$"
@@ -93,18 +118,26 @@ _TIPS_OFF = re.compile(r"^(?:no more tips|stop (?:the |giving me )?tips|turn (?:
                        r"turn off (?:the )?tips|disable tips)$")
 _TIPS_ON = re.compile(r"^(?:turn (?:on )?tips on|turn on (?:the )?tips|enable tips|give me tips again)$")
 _GO_LOCAL = re.compile(
-    r"^(?:go local|switch to local|(?:switch|change|go) (?:back )?to (?:your |my |the )?local (?:brain|model|mode)|"
-    r"use (?:your |my |the )?local (?:brain|model))$")
+    r"^(?:go local|switch to (?:local|lookout)|"
+    r"(?:switch|change|go) (?:back )?to (?:your |my |the )?(?:local|lookout|offline)"
+    r"(?:[\s,]+(?:brain|model|mode|brave))?|"
+    r"use (?:your |my |the )?(?:local|lookout|offline)(?:[\s,]+(?:brain|model|mode|brave))?)$")
 _GO_CLOUD = re.compile(
     r"^(?:go cloud|switch to (?:claude|cloud)|(?:switch|change) to (?:your |the )?(?:cloud|claude) (?:brain|model)|"
     r"use (?:claude|(?:your |the )?cloud (?:brain|model)))$")
 _WHICH_BRAIN = re.compile(
     r"^(?:(?:which|what) (?:brain|model|llm) (?:are you (?:on|using|running)|is (?:this|active|loaded))"
     r"|what(?:'s| is) your (?:current )?(?:brain|model)|list (?:your |the )?(?:brains|models))$")
+_BRAIN_ALIASES = {
+    "fast": "quick",
+    "coding": "coder",
+}
 _SWITCH_BRAIN = re.compile(
     r"^(?:(?:switch|change) (?:to )?(?:your |the |my )?([\w.:-]+) (?:brain|model)"
     r"|use (?:your |the |my )?([\w.:-]+) (?:brain|model)"
-    r"|(?:switch|change) (?:your |the |my )?(?:brain|model) to ([\w.:-]+))$")
+    r"|(?:switch|change) (?:your |the |my )?(?:brain|model) to ([\w.:-]+)"
+    r"|(?:switch|change) (?:to )?(?:your |the |my )?(quick|smart|coder|fast|coding|local|lookout|offline)"
+    r"|use (?:your |the |my )?(quick|smart|coder|fast|coding))$")
 _WHICH_VOICE = re.compile(
     r"^(?:(?:which|what) voice (?:are you (?:on|using)|is (?:this|active))"
     r"|what(?:'s| is) your (?:current )?voice|list (?:your |the )?voices)$")
@@ -149,6 +182,7 @@ class Router:
         self.notes = notes
         self.speaker = speaker
         self._greeting_idx = 0
+        self._ack_idx = 0
 
     def fast_parse(self, text: str, cased: str = "") -> list[tuple[str, dict]] | str | None:
         """Return tool calls, a direct reply string, or None if unsure.
@@ -169,7 +203,7 @@ class Router:
         if _WHICH_BRAIN.match(text):
             return self._which_brain()
         if m := _SWITCH_BRAIN.match(text):
-            return self._switch_brain(m.group(1) or m.group(2) or m.group(3))
+            return self._switch_brain(next(g for g in m.groups() if g))
         if _WHICH_VOICE.match(text):
             return self._which_voice()
         if m := _SWITCH_VOICE.match(text):
@@ -204,6 +238,10 @@ class Router:
             reply = GREETING_REPLIES[self._greeting_idx % len(GREETING_REPLIES)]
             self._greeting_idx += 1
             return reply
+        if _THANKS_ACK.match(text):
+            reply = ACK_REPLIES[self._ack_idx % len(ACK_REPLIES)]
+            self._ack_idx += 1
+            return reply
         if _TIME.match(text):
             return [("get_time", {})]
         if _LOCK.match(text):
@@ -220,6 +258,13 @@ class Router:
                 else:
                     return None  # vague target ("the thing I use for music"): ask the model
             return calls or None
+        if len(text.split()) <= 6 and (m := _OPEN_INVERTED.match(text)):
+            tail = m.group(2).strip()
+            combined = f"{m.group(1)} {tail}".strip()
+            if len(tail.split()) <= 4 and self.toolbox.apps.can_open(tail):
+                return [("open_app", {"name": tail})]
+            if len(combined.split()) <= 4 and self.toolbox.apps.can_open(combined):
+                return [("open_app", {"name": combined})]
         return None
 
     def _add_project(self, name: str, path: str) -> str:
@@ -263,12 +308,29 @@ class Router:
 
     def _switch_brain(self, target: str) -> str:
         key = target.strip().lower()
+        key = _BRAIN_ALIASES.get(key, key)
+        if key in ("local", "lookout", "offline"):
+            return self._go_local()
         if key in config.CLOUD_BRAINS or key == "cloud":
             return self._switch_cloud("claude" if key == "cloud" else key)
         if self.brain is None:
             return "The local model is switched off."
         if key not in config.BRAINS and ":" not in target:
-            return f"Unknown brain '{target}'. Available: {', '.join(config.BRAINS)}."
+            from rapidfuzz import fuzz, process
+            candidates = list(config.BRAINS) + ["local", "claude"]
+            match = process.extractOne(key, candidates, scorer=fuzz.ratio, score_cutoff=75)
+            if match:
+                matched = match[0]
+                if matched == "local":
+                    return self._go_local()
+                if matched == "claude":
+                    return self._switch_cloud("claude")
+                key = matched
+                target = matched
+            else:
+                return f"Unknown brain '{target}'. Available: {', '.join(config.BRAINS)}."
+        else:
+            target = key if key in config.BRAINS else target.strip()
         resolved = config.BRAINS.get(key, target.strip())
         if self.speaker is not None and hasattr(self.speaker, "say") and getattr(self.brain, "model", None) != resolved:
             self.speaker.say("One moment.")
@@ -305,6 +367,20 @@ class Router:
 
     def run_calls(self, calls: list[tuple[str, dict]]) -> str:
         return " ".join(filter(None, (self.toolbox.run(name, args) for name, args in calls)))
+
+    def _is_spurious_action(self, text: str, calls: list[tuple[str, dict]]) -> bool:
+        if not any(name in _DESKTOP_ACTION_TOOLS for name, _ in calls):
+            return False
+        lower_text = text.lower()
+        words = set(re.findall(r"[a-z0-9]+", lower_text))
+        if words & _ACTION_HINTS:
+            return False
+        for _, args in calls:
+            for val in (args or {}).values():
+                for tok in re.findall(r"[a-z0-9]+", str(val).lower()):
+                    if len(tok) >= 3 and tok in lower_text:
+                        return False
+        return True
 
     def handle(self, raw: str) -> Result:
         start = time.perf_counter()
@@ -380,7 +456,15 @@ class Router:
                                  sources=note_sources)
                 elif calls:
                     real = [c for c in calls if c[0] != "offer_to_remember"]
-                    res = Result(self.run_calls(real), real, "llm")
+                    if real and self._is_spurious_action(text, real):
+                        if reply:
+                            reply_text = reply
+                        else:
+                            reply_text = ACK_REPLIES[self._ack_idx % len(ACK_REPLIES)]
+                            self._ack_idx += 1
+                        res = Result(reply_text, [], source="chat", sources=note_sources)
+                    else:
+                        res = Result(self.run_calls(real), real, "llm")
                 else:
                     res = Result(reply or "Sorry, I'm not sure how to help with that.",
                                  source="chat", sources=note_sources)

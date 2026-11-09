@@ -6,7 +6,8 @@ import socket
 import unittest
 from unittest import mock
 
-from app.audio.stt import Transcriber, load_whisper
+from app import config
+from app.audio.stt import Transcriber, hint_prompt, load_whisper
 from app.netwatch import NEEDS_INTERNET, ConnectionLog
 
 
@@ -41,6 +42,13 @@ class OfflineTests(unittest.TestCase):
             t = Transcriber("base.en")
         m.assert_called_once_with("base.en")
         self.assertEqual(t.model, "fake-model")
+
+    def test_hint_prompt_includes_domain_vocabulary(self):
+        prompt = hint_prompt()
+        self.assertIn(config.ASSISTANT_NAME, prompt)
+        self.assertIn("Brave", prompt)
+        for phrase in ("quick brain", "smart brain", "coder brain", "local brain", "Claude", "calm voice"):
+            self.assertIn(phrase, prompt)
 
     def test_loopback_is_not_external(self):
         with socket.create_server(("127.0.0.1", 0)) as srv:

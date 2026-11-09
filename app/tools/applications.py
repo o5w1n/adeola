@@ -114,10 +114,41 @@ class AppIndex:
         return self.resolve(name)[0] is not None or normalize(name) in config.SITE_SHORTCUTS
 
 
+_STRIP_ENV_KEYS = {
+    "ELECTRON_RUN_AS_NODE",
+    "NODE_OPTIONS",
+    "CHROME_DESKTOP",
+    "GDK_PIXBUF_MODULE_FILE",
+}
+
+
+def clean_launch_env(env: dict[str, str] | None = None) -> dict[str, str]:
+    """Return an environment dict without inherited Electron/VS Code IPC variables."""
+    src = os.environ if env is None else env
+    return {
+        k: v
+        for k, v in dict(src).items()
+        if k.upper() not in _STRIP_ENV_KEYS and not k.upper().startswith("VSCODE_")
+    }
+
+
 def launch(target: str) -> None:
     if config.DRY_RUN:
         print(f"   [dry run] would launch: {target}")
         return
     if sys.platform != "win32":
         raise OSError("Launching apps is only supported on Windows.")
-    os.startfile(target)  # ShellExecute: handles .exe, .lnk, shell: and ms-settings:
+    flags = (
+        getattr(subprocess, "DETACHED_PROCESS", 0)
+        | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    )
+    subprocess.Popen(
+        ["cmd.exe", "/c", "start", "", target],
+        env=clean_launch_env(),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=flags,
+        close_fds=True,
+    )

@@ -200,6 +200,67 @@ class WakeTests(unittest.TestCase):
             time.sleep(0.01)
         self.assertEqual(wake.state, wake.IDLE)
 
+    def test_two_turn_waits_for_speaker_wait_until_done_and_drains_echo_blocks(self):
+        self.assertGreaterEqual(config.FOLLOWUP_SPEECH_TIMEOUT, 4.0)
+        self.assertGreaterEqual(config.FOLLOWUP_SETTLE_SECONDS, 0.1)
+
+        echo_marker = 0.42
+        handled = []
+        second_done = threading.Event()
+        wake_ref = {}
+
+        class AsyncQueueSpeaker:
+            def __init__(self):
+                # Simulates Speaker.say("Yes?") returning before worker sets speaking=True
+                self.speaking = False
+                self.last_spoke = 0.0
+                self.stops = 0
+                self.wait_calls = 0
+                self.state_during_wait = None
+
+            def stop(self):
+                self.stops += 1
+
+            def wait_until_done(self):
+                self.wait_calls += 1
+                w = wake_ref["wake"]
+                self.state_during_wait = w.state
+                # Echo blocks arrive from the room while "Yes?" is playing
+                w.feed(block(echo_marker))
+                w._blocks.put_nowait(block(echo_marker))
+
+        speaker = AsyncQueueSpeaker()
+
+        def handle(audio):
+            handled.append(audio)
+            if len(handled) == 1:
+                return "Yes?"
+            second_done.set()
+            return "Opening Brave."
+
+        detector = FakeDetector()
+        wake = WakeWord(handle, detector, speaker=speaker, say=lambda *_: None)
+        wake_ref["wake"] = wake
+
+        self.feed(wake, WAKE)
+        self.feed(wake, SPEECH, 5)
+        self.feed(wake, SILENCE, self.blocks_for(config.END_SILENCE_SECONDS + config.FINISH_SECONDS))
+        for _ in range(50):
+            if len(handled) == 1 and wake.state == wake.CAPTURE:
+                break
+            time.sleep(0.01)
+
+        self.assertEqual(speaker.wait_calls, 1)
+        self.assertEqual(speaker.state_during_wait, wake.BUSY)
+        self.assertEqual(wake.state, wake.CAPTURE)
+        self.assertEqual(wake._audio, [])
+        self.assertTrue(wake._blocks.empty())
+
+        self.feed(wake, SPEECH, 6)
+        self.feed(wake, SILENCE, self.blocks_for(config.END_SILENCE_SECONDS + config.FINISH_SECONDS))
+        self.assertTrue(second_done.wait(2))
+        self.assertFalse(np.any(np.isclose(handled[1], echo_marker)))
+
 
 class ModelChoiceTests(unittest.TestCase):
     def test_falls_back_until_trained_model_exists(self):

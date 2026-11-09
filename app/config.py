@@ -49,6 +49,8 @@ WAKE_PREROLL_SECONDS = 0.4    # seconds of audio before the wake word kept at th
 END_SILENCE_SECONDS = 0.6     # after the wake word, this much quiet ends your command
 FINISH_SECONDS = 0.35         # extra quiet window after END_SILENCE_SECONDS that lets you pause mid-sentence; more speech resumes capture
 NO_SPEECH_TIMEOUT = 4.0       # give up if you say nothing after the wake word
+FOLLOWUP_SPEECH_TIMEOUT = 4.5   # seconds to wait for command after "Yes?"
+FOLLOWUP_SETTLE_SECONDS = 0.15  # brief room-echo settle pause after "Yes?" finishes playing
 MAX_COMMAND_SECONDS = 10
 
 # --- Spoken replies (Kokoro, runs on the CPU) ------------------------------------

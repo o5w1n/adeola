@@ -17,6 +17,7 @@ from pathlib import Path
 from rapidfuzz import fuzz, process, utils
 
 from app import config
+from app.tools.applications import clean_launch_env, launch
 
 _ANDROID_MARKERS = ("settings.gradle", "settings.gradle.kts", "build.gradle", "build.gradle.kts", "gradlew")
 _SKIP = {"node_modules", "venv", ".venv", "__pycache__", "build", "dist", "out", "bin", "obj"}
@@ -108,9 +109,22 @@ def open_project(p: Project) -> str:
     if config.DRY_RUN:
         print(f"   [dry run] would run: {cmd or ['explorer', str(p.path)]}")
     elif cmd:
-        subprocess.Popen(cmd, creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
+        flags = (
+            getattr(subprocess, "DETACHED_PROCESS", 0)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        )
+        subprocess.Popen(
+            cmd,
+            env=clean_launch_env(),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=flags,
+            close_fds=True,
+        )
     elif sys.platform == "win32":
-        os.startfile(str(p.path))
+        launch(str(p.path))
     else:
         raise OSError("Opening folders only works on Windows.")
     where = p.app.title().replace("Vs ", "VS ") if cmd else "File Explorer"
