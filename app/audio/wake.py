@@ -70,6 +70,7 @@ class WakeWord:
             maxlen=max(1, round(config.WAKE_PREROLL_SECONDS / BLOCK_SECONDS))
         )
         self._finish_elapsed = 0.0
+        self._awaiting_followup: bool = False
         self._blocks: queue.Queue = queue.Queue(maxsize=200)
         self._worker = threading.Thread(target=self._run, daemon=True)
         self._worker.start()
@@ -116,15 +117,18 @@ class WakeWord:
             return
         if self.verbose:
             self.say(f"   [wake word {score:.2f}]")
+        if self.speaker:
+            self.speaker.stop()
+        self._start_capture(include_preroll=not speaking)
+
+    def _start_capture(self, include_preroll: bool = True) -> None:
         self.state = self.CAPTURE
-        self._audio: list[np.ndarray] = [] if speaking else list(self._preroll)
+        self._audio: list[np.ndarray] = list(self._preroll) if include_preroll else []
         self._preroll.clear()
         self._heard_speech = False
         self._quiet = 0.0
         self._elapsed = 0.0
         self._finish_elapsed = 0.0
-        if self.speaker:
-            self.speaker.stop()
         beep(880)
         self.say("🎙  Listening...")
 
@@ -141,6 +145,7 @@ class WakeWord:
         if not self._heard_speech and self._elapsed >= config.NO_SPEECH_TIMEOUT:
             beep(440)
             self.say("   (didn't hear a command)")
+            self._awaiting_followup = False
             self._back_to_idle()
             return
         if self._elapsed >= config.MAX_COMMAND_SECONDS:
@@ -172,10 +177,26 @@ class WakeWord:
         threading.Thread(target=self._handle, args=(audio,), daemon=True).start()
 
     def _handle(self, audio: np.ndarray) -> None:
+        reply = None
         try:
-            self.handle_audio(audio)
+            reply = self.handle_audio(audio)
         finally:
-            self._back_to_idle()
+            if reply == "Yes?" and not self._awaiting_followup:
+                deadline = time.monotonic() + 3.0
+                while self.speaker and self.speaker.speaking and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self._awaiting_followup = True
+                self.detector.reset()
+                self._preroll.clear()
+                while not self._blocks.empty():
+                    try:
+                        self._blocks.get_nowait()
+                    except queue.Empty:
+                        break
+                self._start_capture(include_preroll=False)
+            else:
+                self._awaiting_followup = False
+                self._back_to_idle()
 
     def _back_to_idle(self) -> None:
         self.detector.reset()

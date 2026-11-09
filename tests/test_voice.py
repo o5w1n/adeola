@@ -14,7 +14,7 @@ import unittest    # noqa: E402
 import numpy as np  # noqa: E402
 
 from app import config  # noqa: E402
-from app.audio.push_to_talk import PushToTalk  # noqa: E402
+from app.audio.push_to_talk import MISSED_REPLIES, PushToTalk  # noqa: E402
 from app.audio.recorder import BLOCK, PREROLL_SECONDS, Recorder  # noqa: E402
 from app.audio.stt import hint_prompt, is_noise  # noqa: E402
 from app.brain.router import Router  # noqa: E402
@@ -74,6 +74,13 @@ class PushToTalkTests(unittest.TestCase):
         ptt, out = make(text="")
         self.assertIsNone(ptt.process(ptt.recorder.stop()))
         self.assertIn("didn't catch", out[-1])
+
+    def test_nothing_heard_rotates_missed_replies(self):
+        ptt, out = make(text="")
+        audio = ptt.recorder.stop()
+        for expected in MISSED_REPLIES:
+            self.assertIsNone(ptt.process(audio))
+            self.assertEqual(out[-1], f"{config.ASSISTANT_NAME}: {expected}")
 
     def test_key_repeat_and_other_keys(self):
         ptt, _ = make()

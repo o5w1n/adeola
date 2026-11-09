@@ -6,6 +6,7 @@ import os
 import re
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from app import config
@@ -40,15 +41,48 @@ class Note:
 class NotesIndex:
     """In-memory, read-only index of markdown notes."""
 
-    def __init__(self, dirs: list[str | Path] | None = None):
+    def __init__(self, dirs: list[str | Path] | None = None, captures_dir: Path | str | None = None):
         self.dirs: list[Path] = [
             Path(d).expanduser() for d in (config.NOTES_DIRS if dirs is None else dirs)
         ]
+        self._explicit_captures: bool = captures_dir is not None
+        self.captures_dir: Path | None = (
+            Path(captures_dir).expanduser()
+            if captures_dir is not None
+            else (config.CAPTURES_DIR if dirs is None else None)
+        )
         self.notes: list[Note] = []
         self.missing: list[Path] = []
         self.load_ms: float = 0.0
         self._words: list[tuple[set[str], set[str]]] = []
         self.load()
+
+    def _scan_root(self, root: Path, exclude: set[str], max_bytes: int, default_folder: str = "") -> None:
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = sorted(d for d in dirnames if d not in exclude)
+            for fname in sorted(filenames):
+                if not fname.lower().endswith(".md"):
+                    continue
+                fpath = Path(dirpath) / fname
+                try:
+                    rel = fpath.relative_to(root)
+                except ValueError:
+                    rel = Path(fname)
+                if any(part in exclude for part in rel.parts):
+                    continue
+                try:
+                    if fpath.stat().st_size > max_bytes:
+                        continue
+                    raw = fpath.read_text(encoding="utf-8", errors="ignore")
+                except OSError:
+                    continue
+
+                body = _clean_markdown(raw)
+                rel_parent = rel.parent
+                folder = default_folder if str(rel_parent) == "." else rel_parent.as_posix()
+                note = Note(title=fpath.stem, path=fpath, folder=folder, body=body)
+                self.notes.append(note)
+                self._words.append((words(note.title), words(note.body)))
 
     def load(self) -> int:
         """(Re)scan configured directories and return the number of indexed notes."""
@@ -70,34 +104,52 @@ class NotesIndex:
                 self.missing.append(root)
                 continue
 
-            for dirpath, dirnames, filenames in os.walk(root):
-                dirnames[:] = sorted(d for d in dirnames if d not in exclude)
-                for fname in sorted(filenames):
-                    if not fname.lower().endswith(".md"):
-                        continue
-                    fpath = Path(dirpath) / fname
-                    try:
-                        rel = fpath.relative_to(root)
-                    except ValueError:
-                        rel = Path(fname)
-                    if any(part in exclude for part in rel.parts):
-                        continue
-                    try:
-                        if fpath.stat().st_size > max_bytes:
-                            continue
-                        raw = fpath.read_text(encoding="utf-8", errors="ignore")
-                    except OSError:
-                        continue
+            self._scan_root(root, exclude, max_bytes, default_folder="")
 
-                    body = _clean_markdown(raw)
-                    rel_parent = rel.parent
-                    folder = "" if str(rel_parent) == "." else rel_parent.as_posix()
-                    note = Note(title=fpath.stem, path=fpath, folder=folder, body=body)
-                    self.notes.append(note)
-                    self._words.append((words(note.title), words(note.body)))
+        if (
+            self.captures_dir is not None
+            and self.captures_dir not in self.dirs
+            and self.captures_dir.exists()
+            and self.captures_dir.is_dir()
+        ):
+            try:
+                os.scandir(self.captures_dir).close()
+                self._scan_root(self.captures_dir, exclude, max_bytes, default_folder="captures")
+            except OSError:
+                pass
 
         self.load_ms = (time.perf_counter() - t0) * 1000.0
         return len(self.notes)
+
+    def add_capture(self, text: str) -> Note | None:
+        """Write a markdown capture note (when allowed) and index it live in memory."""
+        clean_text = text.strip().rstrip(".")
+        if not clean_text:
+            return None
+        raw_title = " ".join(clean_text.split()[:6]).strip(" \t\r\n.,;:!?\"'()[]{}-")
+        title = (raw_title[0].upper() + raw_title[1:]) if raw_title else "Capture"
+        slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "capture"
+        today = datetime.now().strftime("%Y-%m-%d")
+        raw_md = f"# {title}\n\nDate: {today}\n\n{clean_text}.\n"
+        body = _clean_markdown(raw_md)
+        cap_root = self.captures_dir or config.CAPTURES_DIR
+        fpath = cap_root / f"{today}-{slug}.md"
+
+        if self._explicit_captures or not config.DRY_RUN:
+            cap_root.mkdir(parents=True, exist_ok=True)
+            fpath.write_text(raw_md, encoding="utf-8")
+
+        note = Note(title=title, path=fpath, folder="captures", body=body)
+        w_pair = (words(note.title), words(note.body))
+        for i, existing in enumerate(self.notes):
+            if existing.path == fpath:
+                self.notes[i] = note
+                self._words[i] = w_pair
+                break
+        else:
+            self.notes.append(note)
+            self._words.append(w_pair)
+        return note
 
     def search(
         self,

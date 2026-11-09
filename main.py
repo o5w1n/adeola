@@ -29,7 +29,7 @@ def build(model: str = config.MODEL, use_model: bool = True) -> Router:
     projects = Projects(memory)
     notes = NotesIndex(config.NOTES_DIRS)
     brain = Brain(SCHEMAS, model=model) if use_model else None
-    return Router(Toolbox(apps, memory, projects), brain, notes)
+    return Router(Toolbox(apps, memory, projects, notes), brain, notes)
 
 
 # Short replies she says often. Generated in the background at startup so they play instantly.

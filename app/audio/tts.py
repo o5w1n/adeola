@@ -165,22 +165,149 @@ class AudioCache:
 
 # -- playback --------------------------------------------------------------------
 class SoundDevicePlayer:
-    def play(self, audio, rate):
-        import sounddevice as sd
-        sd.play(audio, rate)
+    """Streams audio chunks through a persistent OutputStream so consecutive
+    sentences do not reopen the Windows audio device between chunks."""
 
-    def wait(self):
-        import sounddevice as sd
-        sd.wait()
+    BLOCK_FRAMES = 2048
 
-    def stop(self):
-        import sounddevice as sd
-        sd.stop()
+    def __init__(self, stream_factory=None):
+        self._stream_factory = stream_factory
+        self._stream = None
+        self._rate: int | None = None
+        self._queue: queue.Queue = queue.Queue()
+        self._abort = threading.Event()
+        self._idle = threading.Event()
+        self._idle.set()
+        self._lock = threading.Lock()
+        self._worker = threading.Thread(target=self._loop, daemon=True)
+        self._worker.start()
+
+    def _open_stream(self, rate: int):
+        if self._stream is not None and self._rate == rate:
+            return self._stream
+        self._close_stream()
+        if self._stream_factory is not None:
+            self._stream = self._stream_factory(samplerate=rate, channels=1, dtype="float32")
+        else:
+            import sounddevice as sd
+            self._stream = sd.OutputStream(samplerate=rate, channels=1, dtype="float32")
+        self._stream.start()
+        self._rate = rate
+        return self._stream
+
+    def _close_stream(self) -> None:
+        if self._stream is not None:
+            try:
+                self._stream.stop()
+                self._stream.close()
+            except Exception:
+                pass
+            self._stream = None
+            self._rate = None
+
+    def _loop(self) -> None:
+        while True:
+            audio, rate = self._queue.get()
+            try:
+                if self._abort.is_set():
+                    continue
+                arr = np.asarray(audio, dtype=np.float32).reshape(-1, 1)
+                stream = self._open_stream(int(rate))
+                for idx in range(0, len(arr), self.BLOCK_FRAMES):
+                    if self._abort.is_set():
+                        break
+                    stream.write(arr[idx : idx + self.BLOCK_FRAMES])
+            except Exception:
+                self._close_stream()
+            finally:
+                self._queue.task_done()
+                if self._queue.empty():
+                    self._idle.set()
+
+    def play(self, audio, rate) -> None:
+        with self._lock:
+            self._abort.clear()
+            self._idle.clear()
+            self._queue.put((audio, int(rate)))
+
+    def wait(self) -> None:
+        self._queue.join()
+        self._idle.wait(timeout=10.0)
+
+    def stop(self) -> None:
+        with self._lock:
+            self._abort.set()
+            while True:
+                try:
+                    self._queue.get_nowait()
+                except queue.Empty:
+                    break
+                self._queue.task_done()
+            self._close_stream()
+            self._idle.set()
 
 
-def load_kokoro():
-    from kokoro_onnx import Kokoro
-    return Kokoro(str(ensure_file(config.TTS_MODEL)), str(ensure_file(VOICES_FILE)))
+class WindowsSapiEngine:
+    """Fallback TTS engine using Windows SAPI when Kokoro cannot be initialized."""
+
+    def get_voices(self) -> list[str]:
+        return ["af_heart", "af_bella", "bf_emma", "sapi_default"]
+
+    def get_voice_style(self, name: str) -> np.ndarray:
+        return np.ones((1, 256), dtype=np.float32)
+
+    def create(self, text: str, voice=None, speed: float = 1.0, lang: str = "en-us") -> tuple[np.ndarray, int]:
+        if config.DRY_RUN or sys.platform != "win32":
+            return np.zeros(2400, dtype=np.float32), 24000
+        import subprocess
+        import tempfile
+        import wave
+
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
+                tmp_path = tf.name
+            safe_text = text.replace("'", "''")
+            safe_path = tmp_path.replace("'", "''")
+            ps_cmd = (
+                "Add-Type -AssemblyName System.Speech; "
+                "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                f"$s.SetOutputToWaveFile('{safe_path}'); "
+                f"$s.Speak('{safe_text}'); "
+                "$s.Dispose()"
+            )
+            subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_cmd],
+                check=True,
+                capture_output=True,
+                timeout=10,
+            )
+            with wave.open(tmp_path, "rb") as wf:
+                rate = wf.getframerate()
+                n_channels = wf.getnchannels()
+                raw = wf.readframes(wf.getnframes())
+            pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+            if n_channels > 1:
+                pcm = pcm.reshape(-1, n_channels).mean(axis=1)
+            return pcm, int(rate)
+        except Exception:
+            return np.zeros(2400, dtype=np.float32), 24000
+        finally:
+            if tmp_path:
+                Path(tmp_path).unlink(missing_ok=True)
+
+
+def load_kokoro(fallback: bool = True, kokoro_loader=None):
+    try:
+        if kokoro_loader is not None:
+            return kokoro_loader()
+        from kokoro_onnx import Kokoro
+        return Kokoro(str(ensure_file(config.TTS_MODEL)), str(ensure_file(VOICES_FILE)))
+    except Exception as e:
+        if not fallback:
+            raise
+        print(f"   (Kokoro unavailable ({e}); using Windows fallback voice.)")
+        return WindowsSapiEngine()
 
 
 class Speaker:

@@ -13,6 +13,7 @@ from app import config  # noqa: E402
 from app.brain.model import Brain  # noqa: E402
 from app.brain.router import Router  # noqa: E402
 from app.memory.notes import Note, NotesIndex  # noqa: E402
+from app.memory.store import Memory  # noqa: E402
 from app.tools.applications import App, AppIndex  # noqa: E402
 from app.tools.registry import SCHEMAS, Toolbox  # noqa: E402
 
@@ -137,6 +138,15 @@ class NotesIndexTests(unittest.TestCase):
         self.assertIsInstance(daily, Note)
         self.assertEqual(daily.folder, "Daily")
 
+    def test_add_capture_writes_markdown_and_indexes_live(self):
+        captures_dir = self.tmp / "captures"
+        idx = NotesIndex([self.tmp], captures_dir=captures_dir)
+        note = idx.add_capture("The finish window should be 900 milliseconds")
+        self.assertIsNotNone(note)
+        self.assertTrue(note.path.exists())
+        self.assertEqual(note.folder, "captures")
+        self.assertEqual(idx.search("finish window 900")[0].path, note.path)
+
 
 class RouterNotesTests(unittest.TestCase):
     def setUp(self):
@@ -198,6 +208,17 @@ class RouterNotesTests(unittest.TestCase):
             run(Router(self.tb, brain, self.idx), "open the finish window notes in notepad").sources,
             [],
         )
+
+    def test_remember_makes_capture_immediately_searchable_in_notes(self):
+        mem = Memory(":memory:")
+        self.addCleanup(mem.close)
+        tb = Toolbox(FAKE_APPS, mem, notes=self.idx)
+        brain = FakeBrain(reply="It is 750 ms.")
+        router = Router(tb, brain, self.idx)
+        run(router, "note to self: the barge in threshold is 750 milliseconds")
+        res = run(router, "what do my notes say about barge in threshold")
+        self.assertEqual(res.source, "notes")
+        self.assertGreaterEqual(len(res.sources), 1)
 
 
 class BrainNotesTests(unittest.TestCase):

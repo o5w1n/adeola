@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -91,6 +92,12 @@ _SKIP = re.compile(r"^(?:no|nope|nah|skip(?: it| that)?|don't|no thanks|never mi
 _TIPS_OFF = re.compile(r"^(?:no more tips|stop (?:the |giving me )?tips|turn (?:off )?tips off|"
                        r"turn off (?:the )?tips|disable tips)$")
 _TIPS_ON = re.compile(r"^(?:turn (?:on )?tips on|turn on (?:the )?tips|enable tips|give me tips again)$")
+_GO_LOCAL = re.compile(
+    r"^(?:go local|switch to local|(?:switch|change|go) (?:back )?to (?:your |my |the )?local (?:brain|model|mode)|"
+    r"use (?:your |my |the )?local (?:brain|model))$")
+_GO_CLOUD = re.compile(
+    r"^(?:go cloud|switch to (?:claude|cloud)|(?:switch|change) to (?:your |the )?(?:cloud|claude) (?:brain|model)|"
+    r"use (?:claude|(?:your |the )?cloud (?:brain|model)))$")
 _WHICH_BRAIN = re.compile(
     r"^(?:(?:which|what) (?:brain|model|llm) (?:are you (?:on|using|running)|is (?:this|active|loaded))"
     r"|what(?:'s| is) your (?:current )?(?:brain|model)|list (?:your |the )?(?:brains|models))$")
@@ -155,6 +162,10 @@ class Router:
             return self.toolbox.tips.set_enabled(False)
         if _TIPS_ON.match(text):
             return self.toolbox.tips.set_enabled(True)
+        if _GO_LOCAL.match(text):
+            return self._go_local()
+        if _GO_CLOUD.match(text):
+            return self._switch_cloud("claude")
         if _WHICH_BRAIN.match(text):
             return self._which_brain()
         if m := _SWITCH_BRAIN.match(text):
@@ -228,12 +239,39 @@ class Router:
         model = getattr(self.brain, "model", config.MODEL)
         return f"I'm on my {name} brain ({model}). Available: {', '.join(config.BRAINS)}."
 
-    def _switch_brain(self, target: str) -> str:
+    def _switch_cloud(self, name: str = "claude") -> str:
+        info = config.CLOUD_BRAINS.get(name.lower(), {"model": name, "api_key_env": "ANTHROPIC_API_KEY"})
+        env_var = info["api_key_env"]
+        key = os.getenv(env_var, "").strip()
+        if not key or key == "PUT-YOUR-KEY-HERE":
+            return f"The cloud brain has no API key set ({env_var}), so I'm staying on my local brain."
+        return f"Cloud brain ({info['model']}) is kept unplugged in local mode; staying on my local brain."
+
+    def _go_local(self) -> str:
+        if self.speaker is not None and hasattr(self.speaker, "switch_voice"):
+            self.speaker.switch_voice("default")
         if self.brain is None:
             return "The local model is switched off."
+        target = config.BRAINS.get("smart", config.MODEL)
+        if getattr(self.brain, "model", None) != target:
+            if self.speaker is not None and hasattr(self.speaker, "say"):
+                self.speaker.say("One moment.")
+            ok, msg = self.brain.switch_model("smart")
+            if not ok:
+                return msg
+        return f"All local: smart brain ({getattr(self.brain, 'model', target)})."
+
+    def _switch_brain(self, target: str) -> str:
         key = target.strip().lower()
+        if key in config.CLOUD_BRAINS or key == "cloud":
+            return self._switch_cloud("claude" if key == "cloud" else key)
+        if self.brain is None:
+            return "The local model is switched off."
         if key not in config.BRAINS and ":" not in target:
             return f"Unknown brain '{target}'. Available: {', '.join(config.BRAINS)}."
+        resolved = config.BRAINS.get(key, target.strip())
+        if self.speaker is not None and hasattr(self.speaker, "say") and getattr(self.brain, "model", None) != resolved:
+            self.speaker.say("One moment.")
         _, msg = self.brain.switch_model(target)
         return msg
 

@@ -32,6 +32,13 @@ def beep(freq: int) -> None:
         threading.Thread(target=_safe_beep, args=(freq,), daemon=True).start()
 
 
+MISSED_REPLIES = (
+    "Sorry, I didn't catch that.",
+    "I missed that — could you say it again?",
+    "Didn't quite catch that.",
+)
+
+
 class PushToTalk:
     def __init__(self, router, recorder, transcriber, lock: threading.Lock | None = None,
                  key=None, say=print, verbose: bool = False, speaker=None):
@@ -45,6 +52,7 @@ class PushToTalk:
         self.speaker = speaker  # optional: speaks replies, and is cut off when you press the key
         self.listening = False
         self._listener = None
+        self._missed_idx = 0
 
     # -- keyboard ------------------------------------------------------------
     def start(self) -> None:
@@ -86,7 +94,9 @@ class PushToTalk:
         text = self.transcriber.transcribe(audio)
         stt_ms = (time.perf_counter() - start) * 1000
         if not text:
-            self.reply("Sorry, I didn't catch that.")
+            msg = MISSED_REPLIES[self._missed_idx % len(MISSED_REPLIES)]
+            self._missed_idx += 1
+            self.reply(msg)
             return None
         self.say(f"You (voice): {text}")
         with self.lock:

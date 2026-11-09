@@ -10,6 +10,9 @@ BRAINS = {
     "smart": MODEL,
     "coder": "qwen2.5-coder:3b",
 }
+CLOUD_BRAINS = {
+    "claude": {"model": "claude-sonnet-4-6", "api_key_env": "ANTHROPIC_API_KEY"},
+}
 KEEP_ALIVE = "30m"      # keep the model loaded so replies stay fast
 KEEP_WARM_SECONDS = 0   # 0 = off (saves GPU memory); set e.g. 600 to ping Ollama every 10 idle minutes
 NUM_CTX = 4096          # fits fully in a 4 GB GPU with qwen3:4b
@@ -143,6 +146,7 @@ SITE_SHORTCUTS = {
 VOICE_CACHE_DIR = DATA_DIR / "voice_cache"
 
 # --- Notes -------------------------------------------------------------------
+CAPTURES_DIR = DATA_DIR / "captures"
 NOTES_DIRS = [os.getenv("ADEOLA_NOTES", str(Path.home() / "Documents" / "qabw"))]
 NOTES_EXCLUDE = (".obsidian", ".trash", ".git", "Templates")   # folder names skipped anywhere
 NOTES_MAX_BYTES = 200_000     # skip bigger files (exports, pasted logs)

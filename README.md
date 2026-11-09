@@ -140,13 +140,13 @@ When a reply uses your notes, Adeola prints the note titles underneath:
    (from your notes: Finish Window, Operating Guide)
 ```
 
-Sources are printed only — never spoken out loud.
+Sources are printed only — never spoken out loud. Saying `"remember that ..."` or `"note to self: ..."` also saves a dated markdown file in `data/captures/` that is indexed immediately.
 
 ## Brain and voice shelf
 
-Switch local Ollama models (`BRAINS` in `config.py`) or Kokoro voice blends (`VOICES` in `config.py`) on the fly:
+Switch local Ollama models (`BRAINS` in `config.py`) or Kokoro voice blends (`VOICES` in `config.py`) on the fly (she says `"One moment."` while loading a new brain):
 
-- **Brains:** `which brain are you on` · `switch to your quick brain` · `switch to your smart brain` · `use your coder brain`
+- **Brains:** `which brain are you on` · `switch to your quick brain` · `switch to your smart brain` · `use your coder brain` · `go local` · `switch to Claude`
 - **Voices:** `which voice are you using` · `use your calm voice` · `switch to your warm voice`
 - **Local honesty:** `do you cost anything` · `are you local` · `what needs the internet`
 

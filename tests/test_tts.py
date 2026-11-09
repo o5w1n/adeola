@@ -14,8 +14,8 @@ import numpy as np  # noqa: E402
 
 from app import config  # noqa: E402
 
-from app.audio.tts import (AudioCache, Speaker, parse_blend, speech_chunks,  # noqa: E402
-                           speech_text, split_sentences)
+from app.audio.tts import (AudioCache, SoundDevicePlayer, Speaker, WindowsSapiEngine,  # noqa: E402
+                           load_kokoro, parse_blend, speech_chunks, speech_text, split_sentences)
 
 
 class FakeEngine:
@@ -141,6 +141,54 @@ class SpeakerTests(unittest.TestCase):
         ok, msg = speaker.switch_voice("nonexistent")
         self.assertFalse(ok)
         self.assertIn("Available:", msg)
+
+    def test_continuous_output_stream_reused_across_chunks_and_aborts_on_stop(self):
+        state = {"starts": 0, "writes": 0, "frames": 0, "closes": 0}
+
+        class FakeStream:
+            def __init__(self, samplerate, channels, dtype):
+                self.samplerate = samplerate
+                self.channels = channels
+                self.dtype = dtype
+
+            def start(self):
+                state["starts"] += 1
+
+            def write(self, data):
+                state["writes"] += 1
+                state["frames"] += len(data)
+
+            def stop(self):
+                pass
+
+            def close(self):
+                state["closes"] += 1
+
+        player = SoundDevicePlayer(stream_factory=FakeStream)
+        player.play(np.ones(4096, dtype=np.float32), 24000)
+        player.play(np.ones(4096, dtype=np.float32), 24000)
+        player.wait()
+        self.assertEqual(state["starts"], 1)
+        self.assertEqual(state["frames"], 8192)
+        self.assertGreaterEqual(state["writes"], 4)
+        player.stop()
+        self.assertEqual(state["closes"], 1)
+
+    def test_load_kokoro_falls_back_to_windows_sapi_engine(self):
+        engine = load_kokoro(
+            fallback=True,
+            kokoro_loader=lambda: (_ for _ in ()).throw(RuntimeError("missing model")),
+        )
+        self.assertIsInstance(engine, WindowsSapiEngine)
+        player = FakePlayer()
+        speaker = Speaker(engine=engine, player=player, cache_dir=None)
+        ok, msg = speaker.switch_voice("calm")
+        self.assertTrue(ok)
+        self.assertEqual(msg, "Switched to my calm voice.")
+        speaker.say("Hello there.")
+        speaker.wait_until_done()
+        self.assertEqual(len(player.played), 1)
+        self.assertGreater(player.played[0], 0)
 
 
 class CacheTests(unittest.TestCase):

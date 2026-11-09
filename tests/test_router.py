@@ -316,6 +316,38 @@ class FastPathTests(unittest.TestCase):
         self.assertIn("Voice is off right now, but 'calm' is available", res.reply)
         self.assertEqual(self.brain.seen, [])
 
+    def test_cloud_honesty_go_local_and_preload_notice(self):
+        from types import SimpleNamespace as NS
+        from unittest.mock import patch
+
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": ""}, clear=False):
+            for cmd in ("switch to Claude", "go cloud"):
+                res = run(self.router, cmd)
+                self.assertEqual(res.source, "fast")
+                self.assertEqual(
+                    res.reply,
+                    "The cloud brain has no API key set (ANTHROPIC_API_KEY), so I'm staying on my local brain.",
+                )
+
+        spoken = []
+        self.router.speaker = NS(say=spoken.append, switch_voice=lambda v: (True, ""))
+
+        res = run(self.router, "switch to your quick brain")
+        self.assertEqual(res.source, "fast")
+        self.assertEqual(self.brain.model, "qwen3:1.7b")
+        self.assertEqual(spoken, ["One moment."])
+
+        res = run(self.router, "switch to your quick brain")
+        self.assertEqual(res.source, "fast")
+        self.assertEqual(spoken, ["One moment."])
+
+        res = run(self.router, "go local")
+        self.assertEqual(res.source, "fast")
+        self.assertEqual(self.brain.model, "qwen3:4b")
+        self.assertEqual(res.reply, "All local: smart brain (qwen3:4b).")
+        self.assertEqual(spoken, ["One moment.", "One moment."])
+        self.assertEqual(self.brain.seen, [])
+
     def test_greeting_rotates_across_turns(self):
         from app.brain.router import GREETING_REPLIES
         self.assertEqual(run(self.router, "hello").reply, GREETING_REPLIES[0])

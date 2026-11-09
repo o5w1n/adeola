@@ -168,6 +168,38 @@ class WakeTests(unittest.TestCase):
         speech_samples = np.sum(np.isclose(self.handled[0], SPEECH))
         self.assertEqual(speech_samples, 12 * BLOCK)
 
+    def test_wake_only_triggers_followup_capture_without_second_wake(self):
+        handled = []
+        second_done = threading.Event()
+
+        def handle(audio):
+            handled.append(audio)
+            if len(handled) == 1:
+                return "Yes?"
+            second_done.set()
+            return "Opening Brave."
+
+        detector = FakeDetector()
+        wake = WakeWord(handle, detector, say=lambda *_: None)
+        self.feed(wake, WAKE)
+        self.feed(wake, SPEECH, 5)
+        self.feed(wake, SILENCE, self.blocks_for(config.END_SILENCE_SECONDS + config.FINISH_SECONDS))
+        for _ in range(50):
+            if len(handled) == 1 and wake.state == wake.CAPTURE:
+                break
+            time.sleep(0.01)
+        self.assertEqual(len(handled), 1)
+        self.assertEqual(wake.state, wake.CAPTURE)
+        self.feed(wake, SPEECH, 6)
+        self.feed(wake, SILENCE, self.blocks_for(config.END_SILENCE_SECONDS + config.FINISH_SECONDS))
+        self.assertTrue(second_done.wait(2))
+        self.assertEqual(len(handled), 2)
+        for _ in range(100):
+            if wake.state == wake.IDLE:
+                break
+            time.sleep(0.01)
+        self.assertEqual(wake.state, wake.IDLE)
+
 
 class ModelChoiceTests(unittest.TestCase):
     def test_falls_back_until_trained_model_exists(self):

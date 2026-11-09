@@ -20,10 +20,11 @@ MEMORY_OFF = "My memory is switched off."
 
 
 class Toolbox:
-    def __init__(self, apps: AppIndex, memory=None, projects=None):
+    def __init__(self, apps: AppIndex, memory=None, projects=None, notes=None):
         self.apps = apps
         self.memory = memory        # app.memory.store.Memory, or None
         self.projects = projects    # app.tools.projects.Projects, or None
+        self.notes = notes          # app.memory.notes.NotesIndex, or None
         self.tips = Tips(memory)
         self.media_control = Media()
         self.pending_offer: str | None = None   # a fact waiting for "keep" or "skip"
@@ -118,6 +119,8 @@ class Toolbox:
         if self.memory is None:
             return MEMORY_OFF
         fact = self.memory.add_fact(note)
+        if self.notes is not None:
+            self.notes.add_capture(fact.text)
         return f"Got it. I'll remember that {to_second_person(fact.text[0].lower() + fact.text[1:])}."
 
     def recall(self, query: str = "") -> str:
