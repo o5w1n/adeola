@@ -9,6 +9,7 @@ Three tables:
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 import threading
@@ -50,6 +51,23 @@ class Fact:
     created: str
 
 
+@dataclass
+class Trace:
+    id: int
+    ts: str
+    raw_text: str
+    clean_text: str
+    source: str
+    brain: str
+    calls: list[tuple[str, dict]]
+    observations: list[tuple[str, dict, str]]
+    reply: str
+    ms: float
+    tok_per_s: float
+    retried: bool
+    steps: int = 1
+
+
 class Memory:
     def __init__(self, path: Path | str):
         self.path = Path(path)
@@ -67,6 +85,21 @@ class Memory:
                 CREATE TABLE IF NOT EXISTS activity (
                     id INTEGER PRIMARY KEY, ts TEXT NOT NULL, kind TEXT NOT NULL, detail TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS counters (key TEXT PRIMARY KEY, n INTEGER NOT NULL);
+                CREATE TABLE IF NOT EXISTS traces (
+                    id INTEGER PRIMARY KEY,
+                    ts TEXT NOT NULL,
+                    raw_text TEXT NOT NULL,
+                    clean_text TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    brain TEXT NOT NULL,
+                    calls_json TEXT NOT NULL,
+                    observations_json TEXT NOT NULL,
+                    reply TEXT NOT NULL,
+                    ms REAL NOT NULL,
+                    tok_per_s REAL NOT NULL,
+                    retried INTEGER NOT NULL DEFAULT 0,
+                    steps INTEGER NOT NULL DEFAULT 1
+                );
             """)
 
     def _q(self, sql: str, args: tuple = ()) -> list[tuple]:
@@ -149,6 +182,77 @@ class Memory:
         n = self.get_counter(key) + 1
         self.set_counter(key, n)
         return n
+
+    # -- traces -------------------------------------------------------------------------
+    def add_trace(
+        self,
+        raw_text: str,
+        clean_text: str,
+        source: str,
+        brain: str,
+        calls: list[tuple[str, dict]] | None = None,
+        observations: list[tuple[str, dict, str]] | None = None,
+        reply: str = "",
+        ms: float = 0.0,
+        tok_per_s: float = 0.0,
+        retried: bool = False,
+        steps: int = 1,
+    ) -> Trace:
+        now = self._now()
+        calls_list = list(calls or [])
+        obs_list = list(observations or [])
+        calls_json = json.dumps(calls_list)
+        obs_json = json.dumps(obs_list)
+        cutoff = (datetime.now() - timedelta(days=30)).isoformat(timespec="seconds")
+        with self._lock, self._db:
+            cur = self._db.execute(
+                """INSERT INTO traces (
+                    ts, raw_text, clean_text, source, brain,
+                    calls_json, observations_json, reply, ms, tok_per_s, retried, steps
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    now, raw_text, clean_text, source, brain,
+                    calls_json, obs_json, reply, float(ms), float(tok_per_s),
+                    int(bool(retried)), int(steps),
+                ),
+            )
+            self._db.execute("DELETE FROM traces WHERE ts < ?", (cutoff,))
+        return Trace(
+            id=cur.lastrowid,
+            ts=now,
+            raw_text=raw_text,
+            clean_text=clean_text,
+            source=source,
+            brain=brain,
+            calls=calls_list,
+            observations=obs_list,
+            reply=reply,
+            ms=float(ms),
+            tok_per_s=float(tok_per_s),
+            retried=bool(retried),
+            steps=int(steps),
+        )
+
+    def recent_traces(self, limit: int = 50) -> list[Trace]:
+        rows = self._q(
+            """SELECT id, ts, raw_text, clean_text, source, brain,
+                      calls_json, observations_json, reply, ms, tok_per_s, retried, steps
+               FROM traces ORDER BY id DESC LIMIT ?""",
+            (limit,),
+        )
+        out: list[Trace] = []
+        for r in rows:
+            calls = [(str(c[0]), dict(c[1] or {})) for c in json.loads(r[6] or "[]")]
+            obs = [(str(o[0]), dict(o[1] or {}), str(o[2])) for o in json.loads(r[7] or "[]")]
+            out.append(
+                Trace(
+                    id=r[0], ts=r[1], raw_text=r[2], clean_text=r[3],
+                    source=r[4], brain=r[5], calls=calls, observations=obs,
+                    reply=r[8], ms=float(r[9]), tok_per_s=float(r[10]),
+                    retried=bool(r[11]), steps=int(r[12]),
+                )
+            )
+        return out
 
     def close(self) -> None:
         self._db.close()

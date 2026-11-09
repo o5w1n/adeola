@@ -20,8 +20,9 @@ def hint_prompt() -> str:
     brains = ", ".join(f"{b} brain" for b in config.BRAINS)
     voices = ", ".join(f"{v} voice" for v in config.VOICES if v != "default")
     return (f"{config.ASSISTANT_NAME}, open {apps}. "
-            f"Switch to your {brains}, local brain, or Claude. "
-            f"Use your {voices}. What do my notes say? Note to self, remember that.")
+            f"Switch to your {brains}, local brain, auto brain, or Claude. "
+            f"Use your {voices}. What do my notes say? Note to self, remember that. "
+            "Show traces, trace summary, what did you mishear?")
 
 
 def is_noise(text: str) -> bool:

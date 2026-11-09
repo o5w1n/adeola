@@ -43,6 +43,7 @@ class Toolbox:
             "recent_activity": self.recent_activity,
             "offer_to_remember": self.offer_to_remember,
             "media": self.media,
+            "search_notes": self.search_notes,
         }
         self._pending_forget_all = False
 
@@ -204,6 +205,15 @@ class Toolbox:
             return "I haven't opened anything for you in the last day."
         return "Most recently, you " + "; ".join(parts) + "."
 
+    def search_notes(self, query: str = "") -> str:
+        query = query.strip()
+        if self.notes is None or not query:
+            return f"Your notes don't mention {query or 'that'}."
+        matches = self.notes.search(query, limit=config.NOTES_IN_PROMPT, min_score=1)
+        if not matches:
+            return f"Your notes don't mention {query}."
+        return " | ".join(f"{n.title}: {self.notes.excerpt(n, query)}" for n in matches)
+
     def _log(self, kind: str, detail: str) -> None:
         if self.memory is not None and not config.DRY_RUN:
             self.memory.log(kind, detail)
@@ -282,7 +292,17 @@ SCHEMAS = [
           "(a deadline, appointment, plan or preference) without asking you to remember it, "
           "answer them in 'reply' AND add this action. Do not use it for general questions.",
           note="The fact in the user's words, e.g. 'My dentist appointment is on Monday'."),
+    _tool("search_notes", "Search the user's local markdown notes / Obsidian vault for a topic.",
+          query="Topic or keywords to look up in the user's notes."),
 ]
+
+ACTION_TOOLS = {
+    "open_app", "open_url", "web_search", "lock_pc", "open_project",
+    "remember", "forget", "media", "offer_to_remember",
+}
+OBSERVATION_TOOLS = {
+    "recall", "list_projects", "recent_activity", "get_time", "search_notes",
+}
 
 # Arguments the model may leave empty.
 OPTIONAL_ARGS = {"query"}

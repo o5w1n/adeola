@@ -235,6 +235,29 @@ class Brain:
                          {"role": "assistant", "content": reply}]
         self.history = self.history[-2 * config.HISTORY_TURNS:]
 
+    def synthesize(self, text: str, observations: list[tuple[str, dict, str]]) -> str:
+        """Step 2 of the bounded agent loop: answer the user using tool observations."""
+        obs_lines = "\n".join(f"- {name}({args}): {out}" for name, args, out in observations)
+        user_prompt = (
+            f"User request: {text}\n\n"
+            f"Tool observations:\n{obs_lines}\n\n"
+            "Using only the tool observations above, answer the user's request in one or two "
+            'short spoken sentences. Set "actions" to [] and put your spoken answer in "reply".'
+        )
+        messages = [
+            {"role": "system", "content": self.system_prompt},
+            *self.history[-2 * config.HISTORY_TURNS:],
+            {"role": "user", "content": user_prompt},
+        ]
+        resp = self._chat(messages)
+        raw = self._unpack(resp, retried=False)
+        if self.mode == "tools":
+            return raw
+        _, reply = self._parse_json(raw)
+        if self.last_stats.get("parse_error"):
+            return ""
+        return reply
+
 
 def _stats(resp, thinking_chars: int, content_chars: int) -> dict:
     """Where the time went, from Ollama's own timings (nanoseconds)."""

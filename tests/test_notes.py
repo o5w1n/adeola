@@ -220,6 +220,23 @@ class RouterNotesTests(unittest.TestCase):
         self.assertEqual(res.source, "notes")
         self.assertGreaterEqual(len(res.sources), 1)
 
+    def test_toolbox_search_notes_returns_excerpts_and_handles_missing(self):
+        from app.tools.registry import ACTION_TOOLS, OBSERVATION_TOOLS, SCHEMAS, Toolbox
+        tb = Toolbox(FAKE_APPS, notes=self.idx)
+        out = tb.run("search_notes", {"query": "finish window"})
+        self.assertIn("Finish Window", out)
+        self.assertIn("900", out)
+        miss = tb.run("search_notes", {"query": "quantum physics"})
+        self.assertEqual(miss, "Your notes don't mention quantum physics.")
+        tb_no_notes = Toolbox(FAKE_APPS, notes=None)
+        self.assertEqual(tb_no_notes.run("search_notes", {"query": "finish window"}),
+                         "Your notes don't mention finish window.")
+        self.assertEqual(tb.run("search_notes", {}), "Your notes don't mention that.")
+        schema_names = {s["function"]["name"] for s in SCHEMAS}
+        self.assertIn("search_notes", schema_names)
+        self.assertEqual(ACTION_TOOLS & OBSERVATION_TOOLS, set())
+        self.assertEqual(ACTION_TOOLS | OBSERVATION_TOOLS, schema_names)
+
 
 class BrainNotesTests(unittest.TestCase):
     def test_notes_block_sits_between_history_and_user(self):

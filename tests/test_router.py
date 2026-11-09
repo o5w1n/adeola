@@ -588,5 +588,202 @@ class LaunchDetachedTests(unittest.TestCase):
             self.assertEqual(kwargs["stdout"], subprocess.DEVNULL)
 
 
+class TwoStepAgentLoopTests(unittest.TestCase):
+    def test_brain_synthesize_formats_observations_and_extracts_reply(self):
+        from types import SimpleNamespace as NS
+        from app.brain.model import Brain
+        from app.tools.registry import SCHEMAS
+
+        class SynthClient:
+            def __init__(self):
+                self.kw = {}
+
+            def chat(self, **kw):
+                self.kw = kw
+                msg = NS(
+                    content='{"actions": [], "reply": "Your exam is this Friday at 9 AM."}',
+                    tool_calls=None,
+                    thinking=None,
+                )
+                return NS(
+                    message=msg, done_reason="stop", load_duration=1e6,
+                    prompt_eval_count=100, prompt_eval_duration=5e7,
+                    eval_count=15, eval_duration=2e8,
+                )
+
+        client = SynthClient()
+        b = Brain(SCHEMAS, model="qwen3:4b", client=client, mode="json")
+        out = b.synthesize(
+            "when is my exam?",
+            [("recall", {"query": "exam"}, "You told me: your exam is on Friday at 9am.")],
+        )
+        self.assertEqual(out, "Your exam is this Friday at 9 AM.")
+        user_msg = client.kw["messages"][-1]["content"]
+        self.assertIn("recall", user_msg)
+        self.assertIn("Friday at 9am", user_msg)
+
+        # Invalid JSON during synthesize must return "" so Router falls back to tool output
+        class BrokenJsonClient:
+            def chat(self, **kw):
+                msg = NS(content="{not valid json", tool_calls=None, thinking=None)
+                return NS(
+                    message=msg, done_reason="stop", load_duration=1e6,
+                    prompt_eval_count=50, prompt_eval_duration=5e7,
+                    eval_count=5, eval_duration=1e8,
+                )
+
+        b_bad = Brain(SCHEMAS, model="qwen3:4b", client=BrokenJsonClient(), mode="json")
+        self.assertEqual(
+            b_bad.synthesize("when is my exam?", [("recall", {"query": "exam"}, "Friday")]),
+            "",
+        )
+
+    def test_observation_tool_triggers_step2_synthesis(self):
+        from app.memory.store import Memory
+        mem = Memory(":memory:")
+        self.addCleanup(mem.close)
+        mem.add_fact("My exam is on Friday at 9am")
+        brain = FakeBrain(calls=[("recall", {"query": "exam"})], reply="")
+        brain.synthesized_reply = "Your exam is coming up this Friday at 9 AM."
+
+        def fake_synth(text, observations):
+            brain.seen_observations = observations
+            return brain.synthesized_reply
+
+        brain.synthesize = fake_synth
+        r = Router(Toolbox(FAKE_APPS, memory=mem), brain=brain)
+        res = r.handle("when is my exam and am I free Friday morning?")
+        self.assertEqual(res.source, "agent")
+        self.assertEqual(res.steps, 2)
+        self.assertEqual(res.reply, "Your exam is coming up this Friday at 9 AM.")
+        self.assertEqual(len(brain.seen_observations), 1)
+        self.assertIn("Friday at 9am", brain.seen_observations[0][2])
+
+    def test_observation_tool_falls_back_to_tool_output_if_synthesize_fails(self):
+        from app.memory.store import Memory
+        mem = Memory(":memory:")
+        self.addCleanup(mem.close)
+        mem.add_fact("My exam is on Friday")
+        brain = FakeBrain(calls=[("recall", {"query": "exam"})], reply="")
+
+        def broken_synth(text, observations):
+            raise RuntimeError("ollama timeout")
+
+        brain.synthesize = broken_synth
+        r = Router(Toolbox(FAKE_APPS, memory=mem), brain=brain)
+        res = r.handle("tell me about my exam")
+        self.assertIn("You told me: your exam is on Friday.", res.reply)
+        self.assertEqual(res.steps, 1)
+
+    def test_action_tool_stays_single_step_receipt(self):
+        brain = FakeBrain(calls=[("open_app", {"name": "Brave"})], reply="")
+        r = Router(Toolbox(FAKE_APPS), brain=brain)
+        with contextlib.redirect_stdout(io.StringIO()):
+            res = r.handle("I need to browse the internet")
+        self.assertEqual(res.source, "llm")
+        self.assertEqual(res.steps, 1)
+        self.assertTrue(res.reply.startswith("Opening Brave."))
+
+
+class AutoBrainPolicyTests(unittest.TestCase):
+    def test_classify_and_vram_thrash_guard(self):
+        from app.brain.policy import BrainPolicy, classify_task
+        self.assertEqual(classify_task("write a python function to parse json"), "coder")
+        self.assertEqual(classify_task("explain the architecture tradeoffs in detail"), "smart")
+        self.assertEqual(classify_task("how is your day"), "quick")
+
+        policy = BrainPolicy()
+        # Never downgrade warm 'smart' to 'quick'
+        self.assertIsNone(policy.recommend("how is your day", current_brain="smart", now=100.0))
+        # Upgrade 'quick' to 'smart' on analytical query
+        self.assertEqual(policy.recommend("explain how this architecture works", current_brain="quick", now=100.0), "smart")
+        # Switch 'smart' to 'coder' on coding query
+        self.assertEqual(policy.recommend("fix this python traceback error", current_brain="smart", now=200.0), "coder")
+
+    def test_manual_switch_pins_brain_until_auto_brain_command(self):
+        brain = FakeBrain(reply="Here is your function.")
+        r = Router(Toolbox(FAKE_APPS), brain=brain)
+        res_pin = r.handle("switch to your quick brain")
+        self.assertIn("quick brain", res_pin.reply)
+        self.assertTrue(r.policy.pinned)
+        # While pinned, coding query stays on quick brain
+        r.handle("debug this python function error")
+        self.assertEqual(brain.brain_name(), "quick")
+        # Re-enabling auto brain unpins and routes coding query to coder
+        res_auto = r.handle("use auto brain")
+        self.assertFalse(r.policy.pinned)
+        self.assertIn("auto", res_auto.reply.lower())
+        r.handle("debug this python function error")
+        self.assertEqual(brain.brain_name(), "coder")
+
+    def test_failed_auto_switch_keeps_current_brain_and_answers(self):
+        brain = FakeBrain(reply="Still answered.")
+        attempted = []
+        def fail_switch(target):
+            attempted.append(target)
+            return False, "Couldn't load coder"
+        brain.switch_model = fail_switch
+        r = Router(Toolbox(FAKE_APPS), brain=brain)
+        res = r.handle("write a python regex script")
+        self.assertEqual(attempted, ["coder"])
+        self.assertEqual(res.reply, "Still answered.")
+
+
+class TraceStoreAndIntrospectionTests(unittest.TestCase):
+    def test_router_logs_traces_and_reports_summary_and_friction(self):
+        from app.memory.store import Memory
+        mem = Memory(":memory:")
+        self.addCleanup(mem.close)
+        r = Router(Toolbox(FAKE_APPS, memory=mem), brain=FakeBrain(reply="Hello"))
+        with contextlib.redirect_stdout(io.StringIO()):
+            r.handle("open spoolify")      # missed app -> friction candidate
+            r.handle("open spotify")       # immediate correction
+        traces = mem.recent_traces()
+        self.assertEqual(len(traces), 2)
+
+        summary = r.handle("how have you been running")
+        self.assertEqual(summary.source, "fast")
+        self.assertIn("2 turns", summary.reply)
+
+        friction = r.handle("what did you mishear")
+        self.assertEqual(friction.source, "fast")
+        self.assertIn("open spoolify", friction.reply.lower())
+        self.assertIn("open spotify", friction.reply.lower())
+
+    def test_trace_logging_failure_never_breaks_router_handle(self):
+        from app.memory.store import Memory
+        mem = Memory(":memory:")
+        self.addCleanup(mem.close)
+        mem.add_trace = lambda **kw: (_ for _ in ()).throw(RuntimeError("db locked"))
+        r = Router(Toolbox(FAKE_APPS, memory=mem), brain=FakeBrain(reply="Hello"))
+        with contextlib.redirect_stdout(io.StringIO()):
+            res = r.handle("open Brave")
+        self.assertTrue(res.reply.startswith("Opening Brave."))
+
+    def test_notes_query_and_pending_offer_are_logged_in_traces(self):
+        import tempfile
+        from pathlib import Path
+        from app.memory.notes import NotesIndex
+        from app.memory.store import Memory
+        mem = Memory(":memory:")
+        self.addCleanup(mem.close)
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "Exam.md").write_text("The final exam is in Hall B.", encoding="utf-8")
+            idx = NotesIndex([Path(tmp)])
+            brain = FakeBrain(reply="It is in Hall B.")
+            r = Router(Toolbox(FAKE_APPS, memory=mem, notes=idx), brain=brain, notes=idx)
+            res_note = r.handle("what do my notes say about the final exam")
+            self.assertEqual(res_note.source, "notes")
+            self.assertEqual(res_note.brain, brain.model)
+            r.toolbox.pending_offer = "My exam is in Hall B"
+            res_offer = r.handle("keep")
+            self.assertEqual(res_offer.source, "fast")
+            traces = mem.recent_traces()
+            self.assertEqual(len(traces), 2)
+            self.assertEqual(traces[0].source, "fast")
+            self.assertEqual(traces[1].source, "notes")
+            self.assertEqual(traces[1].brain, brain.model)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -6,3 +6,6 @@ __pycache__/
 models/
 data/
 graphify-out/
+/.worktrees/
+/.superpowers/
+docs/

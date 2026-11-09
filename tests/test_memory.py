@@ -208,6 +208,27 @@ class RouterMemoryTests(unittest.TestCase):
         )
         self.assertEqual(self.brain.seen, [])
 
+    def test_add_and_list_traces(self):
+        t = self.mem.add_trace(
+            raw_text="Adeola open Brave",
+            clean_text="open brave",
+            source="fast",
+            brain="fast",
+            calls=[("open_app", {"name": "brave"})],
+            observations=[],
+            reply="Opening Brave.",
+            ms=1.8,
+            tok_per_s=0.0,
+            retried=False,
+            steps=1,
+        )
+        traces = self.mem.recent_traces(limit=10)
+        self.assertEqual(len(traces), 1)
+        self.assertEqual(traces[0].id, t.id)
+        self.assertEqual(traces[0].clean_text, "open brave")
+        self.assertEqual(traces[0].calls, [("open_app", {"name": "brave"})])
+        self.assertEqual(traces[0].steps, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
