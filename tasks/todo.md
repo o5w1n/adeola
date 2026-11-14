@@ -1,36 +1,35 @@
-# Adeola Visual Interface (`/hud`) — Implementation Plan & Todo
+# Adeola — Gemini Remote Brain, Eval Harness & JARVIS OS Plan
 
-> **Decisions & Propositions:** [`sys.md`](file:///c:/Users/O%20M%20E%20N/Downloads/adeola/sys.md)
+**Baseline Commit:** `8614a9e` (`feat(hud): add live EventBus, SSE telemetry, and WebGL plasma orb / radar dashboard`)
 
-**Goal:** Build Adeola's browser visual interface at `/hud` combining:
-1. **Pure Presence Mode (Default):** WebGL translucent plasma orb on pure black (`#000000`) reacting in real time to Adeola's pipeline state (`idle`, `wake`, `listening`, `thinking`, `tool`, `speaking`, `offline`) and audio amplitude, with zero screen clutter, type-anywhere input pill, and `Tab` / hover toggle.
-2. **Detailed Radar Dashboard Mode (Toggle):** One continuous screen where the orb shrinks into the central 6-axis pipeline radar (`Wake · Hear · Think · Tools · Speak · Memory`) while dark sci-fi telemetry panels (`Fast-Path Efficiency`, `Pipeline Signals`, `Latency Trends`, `Route Distribution`, `Brain & Policy`, `TraceAnalyzer Insight Strip`, and `Overview / Conversation / Memory & Notes / Traces` views) slide in around it.
+**Goal:** Overcome the 6 GB VRAM ceiling by wiring a provider-agnostic remote brain (**Gemini** first, OpenAI-compatible so Groq/OpenRouter/Claude drop in later), building an **Eval Harness** to benchmark local vs. cloud, adding a **Tier 3 Agent Harness** for multi-step work, and layering in the **JARVIS OS** stages (Skills, Vault outputs, HUD skill buttons).
 
 ---
 
-### Task 1: In-Process Live Event Bus & Pipeline Hooks (`app/events.py`, `app/audio/`, `app/brain/router.py`)
-- [x] **Step 1:** Write unit tests in `tests/test_server.py` for `EventBus` state/level publishing, subscriber queues, and pipeline state emission.
-- [x] **Step 2:** Create `app/events.py` with thread-safe `EventBus` (`emit`, `snapshot`, `subscribe`, `unsubscribe`) and default `BUS` singleton.
-- [x] **Step 3:** Wire lightweight `BUS.emit` calls into `WakeWord` (`wake`, `listening`, `thinking`, `idle`, `wake_score`, mic `level`), `PushToTalk` (`listening`, `thinking`, `hear_ms`), `Router.handle` (`thinking`, `tool`, `turn`), and `Speaker` (`speaking`, `speak_ms`, voice `level`, `idle`).
+## Phase 1: Eval Harness (Baseline & Scoreboard)
+- [x] **1.1** Extend [`tests/eval_commands.py`](file:///c:/Users/O%20M%20E%20N/Downloads/adeola/tests/eval_commands.py) via [`tests/eval_harness.py`](file:///c:/Users/O%20M%20E%20N/Downloads/adeola/tests/eval_harness.py) to score across 3 tiers (T1 fast path, T2 single-turn tool/chat, T3 multi-step/observation+synthesis).
+- [x] **1.2** Record per-run metrics: pass/fail, route source, latency (p50/p95 ms), schema/JSON compliance, and provider/model tag; save JSON report (`data/evals/<brain>.json`).
+- [ ] **1.3** Run live baseline eval on local `qwen3:4b` (when Ollama is running) and `gemini` (once `GEMINI_API_KEY` is set).
 
-### Task 2: HTTP Telemetry, SSE Stream, and `/hud` Endpoint (`app/server.py`)
-- [x] **Step 1:** Write unit tests in `tests/test_server.py` for `GET /hud`, `GET /api/telemetry`, and `GET /api/events` (SSE format & auth).
-- [x] **Step 2:** Implement `/api/telemetry` (aggregated trace metrics, sparkline, route mix, radar axes, `TraceAnalyzer` insight & friction, recent traces, facts, and notes), `/api/events` streaming SSE handler, and `/hud` route in `app/server.py`.
+## Phase 2: Provider-Agnostic Remote Brain (`Gemini` first)
+- [x] **2.1** Add `CLOUD_BRAINS` presets in [`app/config.py`](file:///c:/Users/O%20M%20E%20N/Downloads/adeola/app/config.py) (`gemini` using `GEMINI_API_KEY` + OpenAI-compatible endpoint, plus `groq` / `openrouter` / `claude` slots).
+- [x] **2.2** Implement `RemoteBrain` ([`app/brain/remote.py`](file:///c:/Users/O%20M%20E%20N/Downloads/adeola/app/brain/remote.py)) matching `Brain`'s interface (`decide`, `synthesize`, `warm_up`, `brain_name`) via OpenAI-compatible HTTP `/chat/completions` and Anthropic `/messages` using stdlib `urllib`.
+- [x] **2.3** Replace the `_switch_cloud` stub in [`app/brain/router.py`](file:///c:/Users/O%20M%20E%20N/Downloads/adeola/app/brain/router.py) so `"switch to gemini"` / `"go cloud"` switches live to `RemoteBrain` and `"go local"` restores the local Ollama `Brain`.
+- [x] **2.4** Add `Gemini` pill to [`app/ui/hud.html`](file:///c:/Users/O%20M%20E%20N/Downloads/adeola/app/ui/hud.html) brain switcher.
+- [x] **2.5** Add mocked unit tests in [`tests/test_remote_brain.py`](file:///c:/Users/O%20M%20E%20N/Downloads/adeola/tests/test_remote_brain.py) and update [`tests/test_router.py`](file:///c:/Users/O%20M%20E%20N/Downloads/adeola/tests/test_router.py) (`61 tests OK`).
 
-### Task 3: WebGL Plasma Orb & Slide-In Radar Dashboard UI (`app/ui/hud.html`)
-- [x] **Step 1:** Build `app/ui/hud.html` with:
-  - Custom WebGL fragment shader for the 3D plasma sphere matching `docs/interface/refs/presence-reference.mp4` across all states (`idle`, `wake`, `listening`, `thinking`, `tool`, `speaking`, `offline`).
-  - Smooth shrink-and-slide transition (`Tab` key or corner button) into the 6-axis orbital radar dashboard matching `docs/interface/refs/dashboard-reference.jpg`.
-  - Hand-drawn Canvas sparkline, multi-series trend chart, and route-distribution donut chart (zero external dependencies, 100% offline).
-  - Interactive tabs (`Overview`, `Conversation`, `Memory & Vault`, `Traces`), brain switcher pills, state simulator bar, and type-anywhere command input.
+## Phase 3: Tier 3 Agent Harness & Confidence Routing
+- [x] **3.1** Build bounded multi-step `AgentHarness` ([`app/brain/harness.py`](file:///c:/Users/O%20M%20E%20N/Downloads/adeola/app/brain/harness.py)): plan → execute allow-listed tools → observe → synthesize.
+- [x] **3.2** Add confidence scoring to `Result` (`1.0` fast path, `0.85–0.9` agent/LLM, `0.4` parse error, `0.0` offline) and `deep:` / `research:` / `agent:` Tier 3 trigger in [`app/brain/router.py`](file:///c:/Users/O%20M%20E%20N/Downloads/adeola/app/brain/router.py).
+- [x] **3.3** Emit `harness` progress events and `confidence` in `turn` events on `BUS`.
+- [x] **3.4** Add `.env` loader in [`app/config.py`](file:///c:/Users/O%20M%20E%20N/Downloads/adeola/app/config.py) and clear `HTTPError` / missing-key errors in [`app/brain/remote.py`](file:///c:/Users/O%20M%20E%20N/Downloads/adeola/app/brain/remote.py).
 
-### Task 4: Verification
-- [x] **Step 1:** Run unit tests (`130 tests OK`, including all 14 server/HUD/SSE tests).
+## Phase 4: JARVIS OS Stages (Skills + Vault Outputs + HUD)
+- [x] **4.1** Add `SKILL.md` loader & trace-based "done twice → suggest skill" helper ([`app/skills/loader.py`](file:///c:/Users/O%20M%20E%20N/Downloads/adeola/app/skills/loader.py)) plus starter skills (`morning-brief`, `project-status`).
+- [x] **4.2** Write skill/agent outputs to `qabw/Adeola/outputs/` (with `data/outputs/` fallback) via `save_vault_output`.
+- [x] **4.3** Add `GET /api/skills` + `POST /api/skills/run` in [`app/server.py`](file:///c:/Users/O%20M%20E%20N/Downloads/adeola/app/server.py) and `Groq` pill + `SKILLS & ACTIONS` buttons in [`app/ui/hud.html`](file:///c:/Users/O%20M%20E%20N/Downloads/adeola/app/ui/hud.html).
 
 ---
 
-## Review
-
-- **Live Event Bus ([`app/events.py`](file:///c:/Users/O%20M%20E%20N/Downloads/adeola/app/events.py)):** Thread-safe `EventBus` and `BUS` singleton wired into [`WakeWord`](file:///c:/Users/O%20M%20E%20N/Downloads/adeola/app/audio/wake.py), [`PushToTalk`](file:///c:/Users/O%20M%20E%20N/Downloads/adeola/app/audio/push_to_talk.py), [`Speaker`](file:///c:/Users/O%20M%20E%20N/Downloads/adeola/app/audio/tts.py), and [`Router.handle`](file:///c:/Users/O%20M%20E%20N/Downloads/adeola/app/brain/router.py).
-- **Server Endpoints ([`app/server.py`](file:///c:/Users/O%20M%20E%20N/Downloads/adeola/app/server.py)):** Added `GET /hud` (and `/orb`), `GET /api/telemetry`, and live Server-Sent Events at `GET /api/events` while keeping `/` intact for the Android companion.
-- **Visual HUD ([`app/ui/hud.html`](file:///c:/Users/O%20M%20E%20N/Downloads/adeola/app/ui/hud.html)):** Pure-black WebGL plasma sphere presence with shrink-and-slide transition into the 6-axis Elius-style radar dashboard.
+## Notes
+- `tests/test_media.py` (`test_next_and_now_playing`) hung in the sandbox environment during pre-commit verification; all other 166 unit tests (`test_server`, `test_offline`, `test_preflight`, `test_tts`, `test_voice`, `test_wake`, `test_refinements`, `test_resilience`, `test_router`, `test_memory`, `test_notes`) passed.

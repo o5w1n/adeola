@@ -14,11 +14,13 @@ import time
 from dataclasses import dataclass, field
 
 from app import config
+from app.brain.harness import AgentHarness
 from app.brain.policy import BrainPolicy
+from app.brain.remote import RemoteBrain
 from app.brain.traces import TraceAnalyzer
 from app.events import BUS
 from app.memory.notes import NotesIndex, is_recency_query
-from app.tools.registry import OBSERVATION_TOOLS, Toolbox
+from app.tools.registry import OBSERVATION_TOOLS, SCHEMAS, Toolbox
 
 HELP_TEXT = ("I can open apps, websites and your projects, control music and volume, search the web, remember things "
              "for you, answer from your notes, switch brains and voices, tell you the time and lock your PC. Try: "
@@ -127,8 +129,9 @@ _GO_LOCAL = re.compile(
     r"(?:[\s,]+(?:brain|model|mode|brave))?|"
     r"use (?:your |my |the )?(?:local|lookout|offline)(?:[\s,]+(?:brain|model|mode|brave))?)$")
 _GO_CLOUD = re.compile(
-    r"^(?:go cloud|switch to (?:claude|cloud)|(?:switch|change) to (?:your |the )?(?:cloud|claude) (?:brain|model)|"
-    r"use (?:claude|(?:your |the )?cloud (?:brain|model)))$")
+    r"^(?:go cloud|switch to (?:your |the )?(cloud|claude|gemini|groq|openrouter)(?:[\s,]+(?:brain|model))?"
+    r"|(?:switch|change) to (?:your |the )?(cloud|claude|gemini|groq|openrouter) (?:brain|model)"
+    r"|use (?:your |the )?(cloud|claude|gemini|groq|openrouter)(?:[\s,]+(?:brain|model))?)$")
 _WHICH_BRAIN = re.compile(
     r"^(?:(?:which|what) (?:brain|model|llm) (?:are you (?:on|using|running)|is (?:this|active|loaded))"
     r"|what(?:'s| is) your (?:current )?(?:brain|model)|list (?:your |the )?(?:brains|models))$")
@@ -169,6 +172,7 @@ _RECENT_NOTES_Q = re.compile(
     r"^(?:what (?:was|is|were|are) (?:the )?(?:last|latest|newest|most recent) notes?(?: (?:that (?:was|were) )?(?:added|saved|created|updated|written))?(?: (?:to|in) (?:my )?(?:brain |obsidian )?(?:vault|notes))?"
     r"|(?:show|list|what are) (?:my )?(?:latest|newest|most recent|recent) notes?(?: in (?:my )?(?:brain |obsidian )?vault)?)$"
 )
+_TIER3_AGENT = re.compile(r"^(?:deep|research|agent)\s*[:,-]\s*(.+)$", re.IGNORECASE)
 
 
 @dataclass
@@ -181,6 +185,7 @@ class Result:
     steps: int = 1
     brain: str = "fast"
     observations: list[tuple[str, dict, str]] = field(default_factory=list)
+    confidence: float = 1.0
 
 
 def clean(text: str, keep_case: bool = False) -> str:
@@ -199,9 +204,12 @@ class Router:
     def __init__(self, toolbox: Toolbox, brain=None, notes: NotesIndex | None = None, speaker=None):
         self.toolbox = toolbox
         self.brain = brain
+        self._local_brain = brain
+        self._remote_brains: dict[str, RemoteBrain] = {}
         self.notes = notes
         self.speaker = speaker
         self.policy = BrainPolicy()
+        self.harness = AgentHarness(toolbox)
         self._greeting_idx = 0
         self._ack_idx = 0
 
@@ -219,8 +227,9 @@ class Router:
             return self.toolbox.tips.set_enabled(True)
         if _GO_LOCAL.match(text):
             return self._go_local()
-        if _GO_CLOUD.match(text):
-            return self._switch_cloud("claude")
+        if m := _GO_CLOUD.match(text):
+            target = next((g for g in m.groups() if g), config.DEFAULT_CLOUD_BRAIN)
+            return self._switch_cloud(target)
         if _AUTO_BRAIN.match(text):
             return self._enable_auto_brain()
         if _TRACE_SUMMARY.match(text):
@@ -309,20 +318,37 @@ class Router:
         name = (self.brain.brain_name() if hasattr(self.brain, "brain_name")
                 else getattr(self.brain, "model", config.MODEL))
         model = getattr(self.brain, "model", config.MODEL)
-        return f"I'm on my {name} brain ({model}). Available: {', '.join(config.BRAINS)}."
+        return (f"I'm on my {name} brain ({model}). "
+                f"Local: {', '.join(config.BRAINS)}. Cloud: {', '.join(config.CLOUD_BRAINS)}.")
 
-    def _switch_cloud(self, name: str = "claude") -> str:
-        info = config.CLOUD_BRAINS.get(name.lower(), {"model": name, "api_key_env": "ANTHROPIC_API_KEY"})
+    def _switch_cloud(self, name: str = config.DEFAULT_CLOUD_BRAIN) -> str:
+        key = name.strip().lower()
+        if key == "cloud":
+            key = config.DEFAULT_CLOUD_BRAIN
+        info = config.CLOUD_BRAINS.get(key)
+        if info is None:
+            return f"Unknown cloud brain '{name}'. Available: {', '.join(config.CLOUD_BRAINS)}."
         env_var = info["api_key_env"]
-        key = os.getenv(env_var, "").strip()
-        if not key or key == "PUT-YOUR-KEY-HERE":
+        api_key = os.getenv(env_var, "").strip()
+        if not api_key or api_key == "PUT-YOUR-KEY-HERE":
             return f"The cloud brain has no API key set ({env_var}), so I'm staying on my local brain."
-        return f"Cloud brain ({info['model']}) is kept unplugged in local mode; staying on my local brain."
+        if self.brain is not None and not isinstance(self.brain, RemoteBrain):
+            self._local_brain = self.brain
+        remote = self._remote_brains.get(key)
+        if remote is None or remote.api_key != api_key:
+            tools = getattr(self.brain, "tools", None) or SCHEMAS
+            remote = RemoteBrain(tools, provider_name=key, api_key=api_key)
+            self._remote_brains[key] = remote
+        self.brain = remote
+        self.policy.pinned = True
+        return f"Switched to my {key} cloud brain ({remote.model})."
 
     def _go_local(self) -> str:
         self.policy.pinned = False
         if self.speaker is not None and hasattr(self.speaker, "switch_voice"):
             self.speaker.switch_voice("default")
+        if self._local_brain is not None and isinstance(self.brain, RemoteBrain):
+            self.brain = self._local_brain
         if self.brain is None:
             return "The local model is switched off."
         target = config.BRAINS.get("smart", config.MODEL)
@@ -355,7 +381,7 @@ class Router:
         return TraceAnalyzer(self.toolbox.memory).friction_report()
 
     def _maybe_auto_switch(self, text: str, has_notes: bool = False) -> None:
-        if self.brain is None or not hasattr(self.brain, "switch_model"):
+        if self.brain is None or isinstance(self.brain, RemoteBrain) or not hasattr(self.brain, "switch_model"):
             return
         current = (self.brain.brain_name() if hasattr(self.brain, "brain_name")
                    else getattr(self.brain, "model", config.MODEL))
@@ -374,12 +400,14 @@ class Router:
         if key in ("local", "lookout", "offline"):
             return self._go_local()
         if key in config.CLOUD_BRAINS or key == "cloud":
-            return self._switch_cloud("claude" if key == "cloud" else key)
+            return self._switch_cloud(config.DEFAULT_CLOUD_BRAIN if key == "cloud" else key)
+        if self._local_brain is not None and isinstance(self.brain, RemoteBrain):
+            self.brain = self._local_brain
         if self.brain is None:
             return "The local model is switched off."
         if key not in config.BRAINS and ":" not in target:
             from rapidfuzz import fuzz, process
-            candidates = list(config.BRAINS) + ["local", "claude", "auto"]
+            candidates = list(config.BRAINS) + list(config.CLOUD_BRAINS) + ["local", "auto"]
             match = process.extractOne(key, candidates, scorer=fuzz.ratio, score_cutoff=75)
             if match:
                 matched = match[0]
@@ -387,8 +415,8 @@ class Router:
                     return self._enable_auto_brain()
                 if matched == "local":
                     return self._go_local()
-                if matched == "claude":
-                    return self._switch_cloud("claude")
+                if matched in config.CLOUD_BRAINS:
+                    return self._switch_cloud(matched)
                 key = matched
                 target = matched
             else:
@@ -529,6 +557,34 @@ class Router:
                         self.brain.remember(text, reply_text)
                         res = Result(reply_text, calls, source="notes",
                                      sources=[t for t, _ in matched])
+            elif (m := _TIER3_AGENT.match(text)) and self.brain is not None:
+                goal = m.group(1).strip()
+                matched = self.notes_for(goal)
+                note_sources = [t for t, _ in matched]
+                try:
+                    h_res = self.harness.run(
+                        self.brain,
+                        goal,
+                        facts=self.facts_for(goal),
+                        notes=matched,
+                    )
+                except Exception as e:
+                    res = Result(
+                        f"I couldn't reach the model ({e.__class__.__name__}).",
+                        source="none",
+                        confidence=0.0,
+                    )
+                else:
+                    self.brain.remember(text, h_res.reply)
+                    res = Result(
+                        h_res.reply,
+                        h_res.calls,
+                        source="agent",
+                        sources=note_sources,
+                        steps=h_res.steps,
+                        observations=h_res.observations,
+                        confidence=h_res.confidence,
+                    )
             else:
                 parsed = self.fast_parse(text, clean(raw, keep_case=True))
                 if isinstance(parsed, str):
@@ -605,8 +661,14 @@ class Router:
                 self.brain.remember(text, res.reply)
 
         res.ms = (time.perf_counter() - start) * 1000
-        if res.source != "fast" and self.brain is not None:
+        if res.source == "none":
+            res.confidence = 0.0
+        elif res.source != "fast" and self.brain is not None:
             res.brain = getattr(self.brain, "model", config.MODEL)
+            if getattr(self.brain, "last_stats", {}).get("parse_error"):
+                res.confidence = min(res.confidence, 0.4)
+            elif res.source != "agent":
+                res.confidence = min(res.confidence, 0.9)
         if not (_TRACE_SUMMARY.match(text) or _TRACE_FRICTION.match(text)):
             self._record_trace(raw, text, res)
         next_state = "speaking" if (self.speaker and getattr(self.speaker, "speaking", False)) else "idle"
@@ -621,6 +683,7 @@ class Router:
             calls=[{"tool": n, "args": a} for n, a in res.calls],
             sources=res.sources,
             steps=res.steps,
+            confidence=res.confidence,
         )
         return res
 

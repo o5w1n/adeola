@@ -19,6 +19,7 @@ import numpy as np
 from app import config
 from app.brain.traces import TraceAnalyzer
 from app.events import BUS
+from app.skills.loader import discover_skills, save_vault_output, suggest_skills_from_traces
 
 _HUD_PATH = Path(__file__).resolve().parent / "ui" / "hud.html"
 _AVATAR_PATH = Path(__file__).resolve().parent.parent / "adeola-v1.avatar.json"
@@ -548,6 +549,15 @@ class AdeolaServer:
                 },
             )
 
+        if route == "/api/skills":
+            tb = getattr(self.router, "toolbox", None)
+            mem = tb.memory if tb else None
+            skills = [s.to_dict() for s in discover_skills()]
+            return _json_response(
+                200,
+                {"skills": skills, "suggested": suggest_skills_from_traces(mem)},
+            )
+
         if route == "/api/notes":
             q = (query.get("q", [""])[0] or "").strip()
             notes_idx = getattr(self.router, "notes", None)
@@ -858,6 +868,29 @@ class AdeolaServer:
                     "brain": self._active_brain_name(),
                     "model": brain.model if brain else None,
                     "audio_wav": audio_wav,
+                },
+            )
+
+        if route == "/api/skills/run":
+            name = str(data.get("name") or "").strip()
+            if not name:
+                return _json_response(400, {"error": "Missing 'name'"})
+            match = next((s for s in discover_skills() if s.name == name), None)
+            if match is None:
+                return _json_response(404, {"error": f"Unknown skill '{name}'"})
+            with self.lock:
+                res = self.router.handle(match.prompt)
+            saved_path = None
+            if match.save_to_vault and res.reply:
+                saved_path = str(save_vault_output(match.name, res.reply))
+            return _json_response(
+                200,
+                {
+                    "skill": match.name,
+                    "reply": res.reply,
+                    "source": res.source,
+                    "steps": res.steps,
+                    "saved_to": saved_path,
                 },
             )
 

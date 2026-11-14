@@ -742,6 +742,8 @@
         <button class="pill-btn" id="brain-quick" onclick="switchBrain('quick')">Quick</button>
         <button class="pill-btn" id="brain-smart" onclick="switchBrain('smart')">Smart</button>
         <button class="pill-btn" id="brain-coder" onclick="switchBrain('coder')">Coder</button>
+        <button class="pill-btn" id="brain-gemini" onclick="switchBrain('gemini')">Gemini</button>
+        <button class="pill-btn" id="brain-groq" onclick="switchBrain('groq')">Groq</button>
       </div>
       <div class="pill-group" title="Preview orb state or follow live pipeline">
         <button class="pill-btn active" id="sim-live" onclick="setSimState(null)">Live</button>
@@ -848,6 +850,14 @@
           </div>
         </div>
       </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">
+        <span>SKILLS &amp; ACTIONS</span>
+        <span id="skills-count" style="color:var(--cyan)">0</span>
+      </div>
+      <div id="skills-buttons" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
     </div>
 
     <div class="card grow">
@@ -1713,6 +1723,44 @@
       if (name === "auto") sendCommand("use auto brain");
       else sendCommand("switch to your " + name + " brain");
     }
+
+    async function loadSkills() {
+      try {
+        const res = await fetch("/api/skills", { headers: apiHeaders() });
+        if (!res.ok) return;
+        const data = await res.json();
+        const skills = data.skills || [];
+        document.getElementById("skills-count").textContent = String(skills.length);
+        const box = document.getElementById("skills-buttons");
+        box.innerHTML = "";
+        skills.forEach(s => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "pill-btn";
+          btn.title = s.description || s.name;
+          btn.textContent = s.name;
+          btn.onclick = () => runSkill(s.name);
+          box.appendChild(btn);
+        });
+      } catch {}
+    }
+
+    async function runSkill(name) {
+      const box = document.getElementById("last-turn-box");
+      if (box) box.textContent = "Running skill: " + name + "...";
+      try {
+        const res = await fetch("/api/skills/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...apiHeaders() },
+          body: JSON.stringify({ name }),
+        });
+        const data = await res.json();
+        if (box) box.textContent = data.reply || data.error || "Done.";
+        refreshTelemetry();
+      } catch {}
+    }
+
+    loadSkills();
 
     function submitDock(e) {
       e.preventDefault();

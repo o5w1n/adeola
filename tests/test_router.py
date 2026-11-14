@@ -370,13 +370,19 @@ class FastPathTests(unittest.TestCase):
         from types import SimpleNamespace as NS
         from unittest.mock import patch
 
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": ""}, clear=False):
-            for cmd in ("switch to Claude", "go cloud"):
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "", "GEMINI_API_KEY": ""}, clear=False):
+            res = run(self.router, "switch to Claude")
+            self.assertEqual(res.source, "fast")
+            self.assertEqual(
+                res.reply,
+                "The cloud brain has no API key set (ANTHROPIC_API_KEY), so I'm staying on my local brain.",
+            )
+            for cmd in ("switch to Gemini", "go cloud"):
                 res = run(self.router, cmd)
                 self.assertEqual(res.source, "fast")
                 self.assertEqual(
                     res.reply,
-                    "The cloud brain has no API key set (ANTHROPIC_API_KEY), so I'm staying on my local brain.",
+                    "The cloud brain has no API key set (GEMINI_API_KEY), so I'm staying on my local brain.",
                 )
 
         spoken = []

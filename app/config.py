@@ -3,6 +3,23 @@
 import os
 from pathlib import Path
 
+
+def _load_dotenv(path: Path) -> None:
+    if not path.is_file():
+        return
+    for raw in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        k = k.strip()
+        v = v.strip().strip('"').strip("'")
+        if k:
+            os.environ.setdefault(k, v)
+
+
+_load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
 # --- Model -----------------------------------------------------------------
 MODEL = os.getenv("ADEOLA_MODEL", "qwen3:4b")
 BRAINS = {
@@ -10,8 +27,32 @@ BRAINS = {
     "smart": MODEL,
     "coder": "qwen2.5-coder:3b",
 }
+DEFAULT_CLOUD_BRAIN = os.getenv("ADEOLA_CLOUD_BRAIN", "gemini")
 CLOUD_BRAINS = {
-    "claude": {"model": "claude-sonnet-4-6", "api_key_env": "ANTHROPIC_API_KEY"},
+    "gemini": {
+        "provider": "openai_compat",
+        "model": os.getenv("ADEOLA_GEMINI_MODEL", "gemini-3.8-flash"),
+        "api_key_env": "GEMINI_API_KEY",
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+    },
+    "groq": {
+        "provider": "openai_compat",
+        "model": os.getenv("ADEOLA_GROQ_MODEL", "qwen/qwen3.8-27b"),
+        "api_key_env": "GROQ_API_KEY",
+        "base_url": "https://api.groq.com/openai/v1",
+    },
+    "openrouter": {
+        "provider": "openai_compat",
+        "model": os.getenv("ADEOLA_OPENROUTER_MODEL", "google/gemini-2.5-flash"),
+        "api_key_env": "OPENROUTER_API_KEY",
+        "base_url": "https://openrouter.ai/api/v1",
+    },
+    "claude": {
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-6",
+        "api_key_env": "ANTHROPIC_API_KEY",
+        "base_url": "https://api.anthropic.com/v1",
+    },
 }
 AUTO_BRAIN = True
 AUTO_SWITCH_COOLDOWN_SECONDS = 60.0
