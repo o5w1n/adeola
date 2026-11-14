@@ -325,6 +325,89 @@ class ServerApiTests(unittest.TestCase):
         self.assertIn("http://127.0.0.1:8765", out)
         self.assertIn("http://100.88.99.11:8765", out)
 
+    def test_event_bus_and_pipeline_emission(self):
+        from app.events import BUS, EventBus
+
+        bus = EventBus(min_level_interval=0.0)
+        q = bus.subscribe()
+        bus.emit("state", state="listening", level=0.42, wake_score=0.81)
+        evt = q.get_nowait()
+        self.assertEqual(evt["type"], "state")
+        self.assertEqual(evt["state"], "listening")
+        self.assertAlmostEqual(evt["level"], 0.42, places=2)
+        self.assertAlmostEqual(evt["wake_score"], 0.81, places=2)
+
+        snap = bus.snapshot()
+        self.assertEqual(snap["state"], "listening")
+        self.assertAlmostEqual(snap["level"], 0.42, places=2)
+
+        # numpy float32 values from openWakeWord must serialize cleanly to JSON
+        bus.emit("level", state="idle", wake_score=np.float32(0.37), level=np.float32(0.12))
+        np_evt = q.get_nowait()
+        encoded = json.dumps(np_evt)
+        self.assertIn("0.37", encoded)
+        bus.unsubscribe(q)
+
+        # Router.handle emits turn event to global BUS
+        q_global = BUS.subscribe()
+        try:
+            res = self.router.handle("open Brave")
+            self.assertTrue(res.reply.startswith("Opening Brave."))
+            events = []
+            while not q_global.empty():
+                events.append(q_global.get_nowait())
+            types = [e["type"] for e in events]
+            self.assertIn("turn", types)
+            turn_evt = next(e for e in events if e["type"] == "turn")
+            self.assertEqual(turn_evt["source"], "fast")
+            self.assertTrue(turn_evt["reply"].startswith("Opening Brave."))
+        finally:
+            BUS.unsubscribe(q_global)
+
+    def test_hud_and_telemetry_and_sse_endpoints(self):
+        # Record a couple of turns so telemetry has rich data
+        self.router.handle("open Brave")
+        self.router.handle("remember that my project deadline is Monday")
+        server = AdeolaServer(self.router)
+
+        # 1. GET /hud returns the WebGL presence + radar dashboard HTML
+        status_hud, ctype_hud, raw_hud = server.dispatch("GET", "/hud")
+        self.assertEqual(status_hud, 200)
+        self.assertTrue(ctype_hud.startswith("text/html"), ctype_hud)
+        hud_html = raw_hud.decode("utf-8")
+        self.assertIn("orb-canvas", hud_html)
+        self.assertIn("/api/telemetry", hud_html)
+        self.assertIn("/api/events", hud_html)
+        self.assertIn("FAST-PATH EFFICIENCY", hud_html)
+        self.assertIn("PIPELINE SIGNALS", hud_html)
+
+        # 2. GET /api/telemetry returns aggregated metrics, radar axes, insight, traces, facts, notes
+        status_tel, tel = self._json_call(server, "GET", "/api/telemetry")
+        self.assertEqual(status_tel, 200)
+        self.assertEqual(tel["status"]["assistant"], config.ASSISTANT_NAME)
+        self.assertGreaterEqual(tel["metrics"]["total_turns"], 2)
+        self.assertEqual(len(tel["metrics"]["axes"]), 6)
+        axis_names = [a["key"] for a in tel["metrics"]["axes"]]
+        self.assertEqual(axis_names, ["wake", "hear", "think", "tools", "speak", "memory"])
+        self.assertIn("summary", tel["insight"])
+        self.assertIn("friction", tel["insight"])
+        self.assertGreaterEqual(len(tel["traces"]), 2)
+        self.assertEqual(len(tel["facts"]), 1)
+        self.assertGreaterEqual(len(tel["recent_notes"]), 1)
+
+        # 3. GET /api/events via dispatch returns initial SSE snapshot event
+        status_sse, ctype_sse, raw_sse = server.dispatch("GET", "/api/events")
+        self.assertEqual(status_sse, 200)
+        self.assertTrue(ctype_sse.startswith("text/event-stream"), ctype_sse)
+        sse_text = raw_sse.decode("utf-8")
+        self.assertIn("data: ", sse_text)
+
+        # 4. GET /api/avatar returns adeola-v1.avatar.json
+        status_av, av = self._json_call(server, "GET", "/api/avatar")
+        self.assertEqual(status_av, 200)
+        self.assertEqual(av["name"], "Adeola v1")
+        self.assertIn("expressions", av)
+
 
 if __name__ == "__main__":
     unittest.main()

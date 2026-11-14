@@ -7,6 +7,7 @@ import threading
 import time
 
 from app import config
+from app.events import BUS
 
 
 def parse_key(name: str):
@@ -75,6 +76,7 @@ class PushToTalk:
         self.recorder.start()
         beep(880)
         self.say("🎙  Listening...")
+        BUS.emit("state", state="listening", level=0.2)
 
     def on_release(self, key) -> None:
         if key != self.key or not self.listening:
@@ -82,6 +84,7 @@ class PushToTalk:
         self.listening = False
         audio = self.recorder.stop()
         beep(440)
+        BUS.emit("state", state="thinking", level=0.25)
         threading.Thread(target=self.process, args=(audio,), daemon=True).start()
 
     # -- speech -> command ---------------------------------------------------
@@ -89,10 +92,12 @@ class PushToTalk:
         seconds = len(audio) / config.SAMPLE_RATE
         if seconds < config.MIN_RECORD_SECONDS:
             self.say("   (too short, hold the key while you speak)")
+            BUS.emit("state", state="idle", level=0.0)
             return None
         start = time.perf_counter()
         text = self.transcriber.transcribe(audio)
         stt_ms = (time.perf_counter() - start) * 1000
+        BUS.emit("metric", hear_ms=round(stt_ms, 1), transcript=text)
         if not text:
             msg = MISSED_REPLIES[self._missed_idx % len(MISSED_REPLIES)]
             self._missed_idx += 1

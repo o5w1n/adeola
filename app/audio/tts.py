@@ -21,6 +21,7 @@ from pathlib import Path
 import numpy as np
 
 from app import config
+from app.events import BUS
 
 RELEASES = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/"
 VOICES_FILE = "voices-v1.0.bin"
@@ -449,6 +450,8 @@ class Speaker:
                     break
                 self._queue.task_done()  # keep the queue's count right, or wait_until_done hangs
         self.player.stop()
+        self.speaking = False
+        BUS.emit("state", state="idle", level=0.0)
 
     def _current(self, gen: int) -> bool:
         return gen == self._generation
@@ -482,6 +485,8 @@ class Speaker:
                             self.last_gap_ms = gap_ms
                 if not self._current(gen):
                     break
+                arr = np.asarray(audio, dtype=np.float32)
+                chunk_rms = float(np.sqrt(np.mean(arr ** 2))) if arr.size else 0.15
                 self.player.play(audio, rate)
                 prev_play_started = time.perf_counter()
                 prev_audio_ms = (len(audio) / rate) * 1000 if rate else 0.0
@@ -491,12 +496,19 @@ class Speaker:
                     if self.verbose:
                         print(f"   [voice started after {self.last_latency_ms:.0f} ms"
                               f"{', cached' if cached else ''}]", flush=True)
+                BUS.emit(
+                    "state",
+                    state="speaking",
+                    level=min(1.0, max(0.25, chunk_rms * 4.5)),
+                    speak_ms=round(self.last_latency_ms or 0.0, 1),
+                )
             if self.verbose and self.last_gap_ms > 20:
                 print(f"   [voice gap {self.last_gap_ms:.0f} ms]", flush=True)
             if self._queue.empty():
                 self.player.wait()        # let the last chunk finish before saying we're done
                 self.speaking = False
                 self.last_spoke = time.monotonic()
+                BUS.emit("state", state="idle", level=0.0)
             self._queue.task_done()
 
     def wait_until_done(self) -> None:

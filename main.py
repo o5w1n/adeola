@@ -118,6 +118,7 @@ def start_server(
     srv = AdeolaServer(router, lock=lock, speaker=speaker, transcriber=transcriber, port=port)
     srv.start()
     print(f"{N}: Server live at http://127.0.0.1:{port}")
+    print(f"{N}: Visual HUD at  http://127.0.0.1:{port}/hud")
     ts_ip = tailscale_ip()
     if ts_ip:
         print(f"{N}: Tailscale (Android): http://{ts_ip}:{port}")

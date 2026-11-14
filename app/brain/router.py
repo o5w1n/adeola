@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 import os
 import re
 import time
@@ -15,7 +16,8 @@ from dataclasses import dataclass, field
 from app import config
 from app.brain.policy import BrainPolicy
 from app.brain.traces import TraceAnalyzer
-from app.memory.notes import NotesIndex
+from app.events import BUS
+from app.memory.notes import NotesIndex, is_recency_query
 from app.tools.registry import OBSERVATION_TOOLS, Toolbox
 
 HELP_TEXT = ("I can open apps, websites and your projects, control music and volume, search the web, remember things "
@@ -159,9 +161,13 @@ _SWITCH_VOICE = re.compile(
 _OPEN_PROJECT = re.compile(r"^(?:open|launch|start|load|work on|let's work on)(?: up)? "
                            r"(?:my |the )?(?:project )?(.+?)(?: project)$|^open project (.+)$")
 _NOTES_Q = re.compile(
-    r"^(?:what do(?:es)? my (?:notes|vault) say about|"
-    r"(?:check|search|look (?:in|through)) my (?:notes|vault)(?: for| about)?|"
-    r"(?:in|according to) my notes,?) (?:the )?(.+)$"
+    r"^(?:what do(?:es)? my (?:notes|vault|brain vault) say about|"
+    r"(?:check|search|look (?:in|through)) my (?:notes|vault|brain vault)(?: for| about)?|"
+    r"(?:in|according to) my (?:notes|vault|brain vault),?) (?:the )?(.+)$"
+)
+_RECENT_NOTES_Q = re.compile(
+    r"^(?:what (?:was|is|were|are) (?:the )?(?:last|latest|newest|most recent) notes?(?: (?:that (?:was|were) )?(?:added|saved|created|updated|written))?(?: (?:to|in) (?:my )?(?:brain |obsidian )?(?:vault|notes))?"
+    r"|(?:show|list|what are) (?:my )?(?:latest|newest|most recent|recent) notes?(?: in (?:my )?(?:brain |obsidian )?vault)?)$"
 )
 
 
@@ -422,11 +428,23 @@ class Router:
     def notes_for(self, text: str, min_score: int = config.NOTES_MIN_SCORE) -> list[tuple[str, str]]:
         if self.notes is None or config.NOTES_IN_PROMPT <= 0:
             return []
+        if is_recency_query(text) and hasattr(self.notes, "recent"):
+            matches = self.notes.recent(limit=config.NOTES_IN_PROMPT)
+            out = []
+            for i, n in enumerate(matches):
+                dt = (datetime.fromtimestamp(n.mtime).strftime("%Y-%m-%d %H:%M")
+                      if getattr(n, "mtime", 0) else "recent")
+                out.append((n.title, f"(Most recent #{i + 1}, updated {dt}) {self.notes.excerpt(n, text)}"))
+            return out
         matches = self.notes.search(text, limit=config.NOTES_IN_PROMPT, min_score=min_score)
         return [(n.title, self.notes.excerpt(n, text)) for n in matches]
 
     def run_calls(self, calls: list[tuple[str, dict]]) -> str:
-        return " ".join(filter(None, (self.toolbox.run(name, args) for name, args in calls)))
+        outputs = []
+        for name, args in calls:
+            BUS.emit("state", state="tool", tool=name, level=0.45)
+            outputs.append(self.toolbox.run(name, args))
+        return " ".join(filter(None, outputs))
 
     def _is_spurious_action(self, text: str, calls: list[tuple[str, dict]]) -> bool:
         if not any(name in _DESKTOP_ACTION_TOOLS for name, _ in calls):
@@ -447,6 +465,7 @@ class Router:
         text = clean(raw)
         if not text:
             return Result("Yes?", source="fast")
+        BUS.emit("state", state="thinking", text=text, level=0.35)
 
         try:
             # A pending "want me to remember that?" is answered by the very next command only.
@@ -461,6 +480,33 @@ class Router:
 
             if res is not None:
                 pass
+            elif _RECENT_NOTES_Q.match(text):
+                matched = self.notes_for(text, min_score=1)
+                if not matched:
+                    res = Result("You don't have any notes in your vault yet.", source="notes")
+                elif self.brain is None:
+                    titles = ", ".join(t for t, _ in matched)
+                    res = Result(f"Your most recent note is {matched[0][0]} (recent: {titles}).",
+                                 source="notes", sources=[t for t, _ in matched])
+                else:
+                    try:
+                        calls, reply = self.brain.decide(
+                            clean(raw, keep_case=True), self.facts_for(text), notes=matched
+                        )
+                    except Exception as e:
+                        res = Result(f"I couldn't reach the local model ({e.__class__.__name__}). "
+                                     "Is Ollama running?", source="none")
+                    else:
+                        if not reply and calls and hasattr(self.brain, "synthesize"):
+                            obs = [(n, a, self.toolbox.run(n, a)) for n, a in calls]
+                            try:
+                                reply = self.brain.synthesize(clean(raw, keep_case=True), obs).strip()
+                            except Exception:
+                                reply = ""
+                        reply_text = reply or f"The most recent note in your vault is {matched[0][0]}."
+                        self.brain.remember(text, reply_text)
+                        res = Result(reply_text, calls, source="notes",
+                                     sources=[t for t, _ in matched])
             elif m := _NOTES_Q.match(text):
                 topic = m.group(1)
                 matched = self.notes_for(topic, min_score=1)
@@ -563,6 +609,19 @@ class Router:
             res.brain = getattr(self.brain, "model", config.MODEL)
         if not (_TRACE_SUMMARY.match(text) or _TRACE_FRICTION.match(text)):
             self._record_trace(raw, text, res)
+        next_state = "speaking" if (self.speaker and getattr(self.speaker, "speaking", False)) else "idle"
+        BUS.emit(
+            "turn",
+            state=next_state,
+            text=text,
+            reply=res.reply,
+            source=res.source,
+            ms=round(res.ms, 1),
+            brain=res.brain,
+            calls=[{"tool": n, "args": a} for n, a in res.calls],
+            sources=res.sources,
+            steps=res.steps,
+        )
         return res
 
     def _record_trace(self, raw: str, clean_text: str, res: Result) -> None:

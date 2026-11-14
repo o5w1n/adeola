@@ -1,0 +1,1786 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#000000" />
+  <title>ADEOLA · Operational Intelligence & Presence</title>
+  <style>
+    :root {
+      --bg: #000000;
+      --panel: rgba(10, 15, 26, 0.78);
+      --panel-strong: rgba(12, 18, 32, 0.92);
+      --border: rgba(56, 189, 248, 0.16);
+      --border-subtle: rgba(148, 163, 184, 0.12);
+      --text: #e2e8f0;
+      --muted: #64748b;
+      --dim: #94a3b8;
+      --emerald: #34d399;
+      --cyan: #38bdf8;
+      --blue: #3b82f6;
+      --violet: #a855f7;
+      --pink: #ec4899;
+      --amber: #fbbf24;
+      --danger: #f87171;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: #000000;
+      color: var(--text);
+      font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      user-select: none;
+    }
+
+    /* ── Stage & Central WebGL Orb ─────────────────────────────── */
+    #stage {
+      position: fixed;
+      inset: 0;
+      background: radial-gradient(circle at 50% 50%, rgba(16, 24, 48, 0.22) 0%, #000000 72%);
+      transition: opacity 0.6s ease;
+    }
+    body:not(.dashboard-open) #stage {
+      background: #000000;
+    }
+
+    #orb-wrap {
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      width: min(74vmin, 680px);
+      height: min(74vmin, 680px);
+      transform: translate(-50%, -50%) scale(1);
+      transition: transform 0.68s cubic-bezier(0.22, 1, 0.36, 1),
+                  top 0.68s cubic-bezier(0.22, 1, 0.36, 1);
+      z-index: 5;
+      pointer-events: none;
+    }
+    body.dashboard-open #orb-wrap {
+      top: 47%;
+      transform: translate(-50%, -50%) scale(0.56);
+    }
+    body.dashboard-open.tab-alt #orb-wrap {
+      top: 47%;
+      transform: translate(-50%, -50%) scale(0.32);
+      opacity: 0.22;
+    }
+
+    #orb-canvas, #avatar-canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    #avatar-canvas { display: none; }
+    body.avatar-mode #orb-canvas { display: none; }
+    body.avatar-mode #avatar-canvas { display: block; }
+
+    /* ── Radar Overlay (6 Pipeline Axes + Orbit Rings) ─────────── */
+    #radar-overlay {
+      position: fixed;
+      left: 50%;
+      top: 47%;
+      width: min(68vmin, 620px);
+      height: min(68vmin, 620px);
+      transform: translate(-50%, -50%) scale(0.84);
+      opacity: 0;
+      pointer-events: none;
+      z-index: 6;
+      transition: opacity 0.55s ease, transform 0.68s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    body.dashboard-open:not(.tab-alt) #radar-overlay {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+    }
+    #orbit-canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+    .axis-node {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      min-width: 112px;
+      pointer-events: auto;
+    }
+    .axis-title {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--cyan);
+      text-shadow: 0 0 12px rgba(56, 189, 248, 0.45);
+    }
+    .axis-node.emerald .axis-title {
+      color: var(--emerald);
+      text-shadow: 0 0 12px rgba(52, 211, 153, 0.45);
+    }
+    .axis-sub {
+      font-size: 12px;
+      color: var(--dim);
+      margin-top: 2px;
+      font-weight: 500;
+    }
+    .axis-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      margin: 5px auto 0;
+      background: var(--cyan);
+      box-shadow: 0 0 10px var(--cyan);
+    }
+    .axis-node.emerald .axis-dot {
+      background: var(--emerald);
+      box-shadow: 0 0 10px var(--emerald);
+    }
+
+    /* ── Subtle Corner Toggle in Orb Mode (P14) ────────────────── */
+    #corner-toggle {
+      position: fixed;
+      top: 18px;
+      right: 22px;
+      z-index: 40;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(15, 23, 42, 0.65);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      color: var(--dim);
+      padding: 7px 13px;
+      border-radius: 999px;
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      backdrop-filter: blur(10px);
+      opacity: 0;
+      transition: opacity 0.35s ease, border-color 0.2s ease, color 0.2s ease;
+    }
+    body.mouse-awake #corner-toggle,
+    body.dashboard-open #corner-toggle {
+      opacity: 1;
+    }
+    #corner-toggle:hover {
+      color: #fff;
+      border-color: var(--cyan);
+    }
+    .live-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--emerald);
+      box-shadow: 0 0 8px var(--emerald);
+    }
+    .kbd-hint {
+      font-size: 10px;
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text);
+    }
+
+    /* ── Floating Type-to-Talk Pill in Orb Mode (P13) ──────────── */
+    #floating-composer {
+      position: fixed;
+      left: 50%;
+      bottom: 38px;
+      transform: translateX(-50%) translateY(18px);
+      width: min(520px, 88vw);
+      background: rgba(12, 18, 32, 0.85);
+      border: 1px solid rgba(56, 189, 248, 0.32);
+      border-radius: 999px;
+      padding: 8px 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      backdrop-filter: blur(14px);
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.75), 0 0 24px rgba(56, 189, 248, 0.14);
+      opacity: 0;
+      pointer-events: none;
+      z-index: 45;
+      transition: opacity 0.22s ease, transform 0.22s ease;
+    }
+    #floating-composer.visible {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateX(-50%) translateY(0);
+    }
+    #floating-input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: #fff;
+      font-size: 15px;
+    }
+    #floating- composer-hint {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    /* ── Top Bar (Dashboard Mode) ──────────────────────────────── */
+    #topbar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 54px;
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-subtle);
+      background: rgba(6, 10, 18, 0.82);
+      backdrop-filter: blur(12px);
+      z-index: 30;
+      transform: translateY(-100%);
+      opacity: 0;
+      transition: transform 0.55s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.45s ease;
+    }
+    body.dashboard-open #topbar {
+      transform: translateY(0);
+      opacity: 1;
+    }
+    .brand-lockup {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .brand-glyph {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, #ff66e5, #7c3aed 55%, #1d4ed8);
+      box-shadow: 0 0 14px rgba(236, 72, 153, 0.6);
+    }
+    .brand-name {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.24em;
+      color: #f8fafc;
+    }
+    .brand-sub {
+      font-size: 12px;
+      color: var(--muted);
+      padding-left: 10px;
+      border-left: 1px solid var(--border-subtle);
+    }
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-right: 155px;
+    }
+    .pill-group {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      background: rgba(15, 23, 42, 0.7);
+      padding: 3px;
+      border-radius: 999px;
+      border: 1px solid var(--border-subtle);
+    }
+    .pill-btn {
+      background: transparent;
+      color: var(--dim);
+      border: none;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.18s ease;
+    }
+    .pill-btn:hover { color: #fff; }
+    .pill-btn.active {
+      background: rgba(56, 189, 248, 0.18);
+      color: var(--cyan);
+      box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.38);
+    }
+
+    /* ── Side Columns (Overview Tab) ───────────────────────────── */
+    .side-col {
+      position: fixed;
+      top: 70px;
+      bottom: 108px;
+      width: min(330px, 26vw);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      z-index: 20;
+      transition: transform 0.62s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.5s ease;
+      opacity: 0;
+      pointer-events: none;
+    }
+    #left-col {
+      left: 22px;
+      transform: translateX(-120%);
+    }
+    #right-col {
+      right: 22px;
+      transform: translateX(120%);
+    }
+    body.dashboard-open:not(.tab-alt) #left-col,
+    body.dashboard-open:not(.tab-alt) #right-col {
+      transform: translateX(0);
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .section-head {
+      margin-bottom: 2px;
+    }
+    .section-head h1 {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      color: #f8fafc;
+    }
+    .section-head p {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border-subtle);
+      border-radius: 12px;
+      padding: 14px 16px;
+      backdrop-filter: blur(14px);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    }
+    .card.grow { flex: 1; min-height: 0; }
+    .card-title {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--dim);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .hero-metric {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+    }
+    .hero-val {
+      font-size: 38px;
+      font-weight: 700;
+      color: var(--emerald);
+      line-height: 1;
+      letter-spacing: -0.02em;
+    }
+    .hero-sub {
+      font-size: 12px;
+      color: var(--dim);
+    }
+    .stat-split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      padding-top: 6px;
+      border-top: 1px solid var(--border-subtle);
+    }
+    .stat-label {
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .stat-num {
+      font-size: 17px;
+      font-weight: 600;
+      color: #f8fafc;
+      margin-top: 2px;
+    }
+    .stat-num.emerald { color: var(--emerald); }
+
+    /* Signals list */
+    .signal-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 2px;
+    }
+    .signal-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12.5px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.07);
+    }
+    .signal-row:last-child { border-bottom: none; padding-bottom: 0; }
+    .signal-name {
+      color: var(--dim);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .sig-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--cyan);
+    }
+    .signal-val {
+      font-weight: 600;
+      color: #f1f5f9;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .signal-badge {
+      font-size: 11px;
+      color: var(--emerald);
+      font-weight: 500;
+    }
+
+    /* Donut & Legend */
+    .donut-wrap {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .legend-list {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 12px;
+    }
+    .legend-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .legend-key {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--dim);
+    }
+    .swatch {
+      width: 8px;
+      height: 8px;
+      border-radius: 2px;
+    }
+
+    /* ── Alternate Tab Drawer (Conversation / Memory / Traces) ─── */
+    #tab-panel {
+      position: fixed;
+      top: 68px;
+      left: 24px;
+      right: 24px;
+      bottom: 108px;
+      background: var(--panel-strong);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px 22px;
+      backdrop-filter: blur(18px);
+      z-index: 25;
+      display: none;
+      flex-direction: column;
+      gap: 14px;
+      overflow: hidden;
+    }
+    body.dashboard-open.tab-alt #tab-panel {
+      display: flex;
+    }
+    .tab-view {
+      display: none;
+      flex-direction: column;
+      height: 100%;
+      gap: 12px;
+      overflow: hidden;
+    }
+    .tab-view.active {
+      display: flex;
+    }
+    .scroll-area {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding-right: 6px;
+    }
+    .chat-bubble {
+      padding: 10px 14px;
+      border-radius: 10px;
+      background: rgba(30, 41, 59, 0.65);
+      border: 1px solid var(--border-subtle);
+      font-size: 13.5px;
+      line-height: 1.45;
+    }
+    .chat-bubble .q { color: var(--cyan); font-weight: 600; margin-bottom: 4px; }
+    .chat-bubble .a { color: #f1f5f9; }
+    .chat-bubble .m { font-size: 11px; color: var(--muted); margin-top: 5px; }
+
+    table.trace-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12.5px;
+    }
+    table.trace-table th, table.trace-table td {
+      text-align: left;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    table.trace-table th {
+      font-size: 10.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+
+    /* ── Bottom Insight Bar + Footer Tabs ──────────────────────── */
+    #bottom-dock {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 30;
+      transform: translateY(105%);
+      opacity: 0;
+      transition: transform 0.58s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.45s ease;
+    }
+    body.dashboard-open #bottom-dock {
+      transform: translateY(0);
+      opacity: 1;
+    }
+    #insight-bar {
+      margin: 0 22px 8px;
+      padding: 10px 16px;
+      background: rgba(12, 19, 34, 0.88);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      backdrop-filter: blur(12px);
+    }
+    .insight-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
+      color: #e2e8f0;
+      min-width: 0;
+    }
+    .insight-tag {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      padding: 3px 8px;
+      border-radius: 4px;
+      background: rgba(56, 189, 248, 0.14);
+      color: var(--cyan);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      flex-shrink: 0;
+    }
+    .insight-mid {
+      font-size: 12px;
+      color: var(--dim);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .dock-form {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .dock-input {
+      width: 240px;
+      background: rgba(2, 6, 23, 0.75);
+      border: 1px solid var(--border-subtle);
+      border-radius: 7px;
+      padding: 6px 11px;
+      color: #fff;
+      font-size: 12.5px;
+      outline: none;
+    }
+    .dock-input:focus { border-color: var(--cyan); }
+    .dock-btn {
+      background: rgba(59, 130, 246, 0.22);
+      color: #93c5fd;
+      border: 1px solid rgba(59, 130, 246, 0.45);
+      padding: 6px 12px;
+      border-radius: 7px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .dock-btn:hover { background: rgba(59, 130, 246, 0.35); color: #fff; }
+
+    #tab-bar {
+      height: 42px;
+      padding: 0 24px;
+      background: rgba(5, 8, 15, 0.94);
+      border-top: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12.5px;
+    }
+    .tabs-left {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      height: 100%;
+    }
+    .tab-btn {
+      height: 100%;
+      background: transparent;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--muted);
+      padding: 0 14px;
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: color 0.18s ease, border-color 0.18s ease;
+    }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active {
+      color: var(--cyan);
+      border-bottom-color: var(--cyan);
+    }
+    .sync-meta {
+      font-size: 11px;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <div id="stage"></div>
+
+  <!-- Central WebGL Plasma Orb / Adeola v1 Avatar (Never unmounts; shrinks into radar on toggle) -->
+  <div id="orb-wrap">
+    <canvas id="orb-canvas"></canvas>
+    <canvas id="avatar-canvas"></canvas>
+  </div>
+
+  <!-- 6-Axis Radar Overlay around the Orb -->
+  <div id="radar-overlay">
+    <canvas id="orbit-canvas"></canvas>
+    <div class="axis-node" id="axis-wake" style="left: 50%; top: 5%;">
+      <div class="axis-title">WAKE</div>
+      <div class="axis-sub" id="axis-wake-sub">Ready</div>
+      <div class="axis-dot"></div>
+    </div>
+    <div class="axis-node" id="axis-hear" style="left: 91%; top: 28%;">
+      <div class="axis-title">HEAR</div>
+      <div class="axis-sub" id="axis-hear-sub">Whisper CPU</div>
+      <div class="axis-dot"></div>
+    </div>
+    <div class="axis-node" id="axis-think" style="left: 88%; top: 75%;">
+      <div class="axis-title">THINK</div>
+      <div class="axis-sub" id="axis-think-sub">Local Brain</div>
+      <div class="axis-dot"></div>
+    </div>
+    <div class="axis-node emerald" id="axis-memory" style="left: 50%; top: 95%;">
+      <div class="axis-title">MEMORY</div>
+      <div class="axis-sub" id="axis-memory-sub">Vault + SQLite</div>
+      <div class="axis-dot"></div>
+    </div>
+    <div class="axis-node emerald" id="axis-speak" style="left: 12%; top: 75%;">
+      <div class="axis-title">SPEAK</div>
+      <div class="axis-sub" id="axis-speak-sub">Kokoro Voice</div>
+      <div class="axis-dot"></div>
+    </div>
+    <div class="axis-node emerald" id="axis-tools" style="left: 9%; top: 28%;">
+      <div class="axis-title">TOOLS</div>
+      <div class="axis-sub" id="axis-tools-sub">Fast Dispatch</div>
+      <div class="axis-dot"></div>
+    </div>
+  </div>
+
+  <!-- Subtle Toggle Control (auto-hides in Orb Mode until mouse moves) -->
+  <button id="corner-toggle" type="button" onclick="toggleDashboard()">
+    <span class="live-dot" id="live-dot"></span>
+    <span id="toggle-label">Analysis</span>
+    <span class="kbd-hint">Tab</span>
+  </button>
+
+  <!-- Floating Type-to-Talk Bar (Orb Mode: appears when you press any letter key) -->
+  <form id="floating-composer" onsubmit="submitFloating(event)">
+    <input id="floating-input" type="text" placeholder="Say Adeola or type a command..." autocomplete="off" />
+    <span id="floating-composer-hint">Enter ↵ · Esc</span>
+  </form>
+
+  <!-- Dashboard Top Bar -->
+  <header id="topbar">
+    <div class="brand-lockup">
+      <div class="brand-glyph"></div>
+      <span class="brand-name">ADEOLA</span>
+      <span class="brand-sub">Operational Intelligence &amp; Voice Telemetry</span>
+    </div>
+    <div class="topbar-right">
+      <div class="pill-group" title="Presence visual mode (shortcut: A)">
+        <button class="pill-btn active" id="vis-orb" onclick="setVisualMode('orb')">Orb</button>
+        <button class="pill-btn" id="vis-avatar" onclick="setVisualMode('avatar')">Avatar</button>
+      </div>
+      <div class="pill-group" title="Switch Adeola's active brain">
+        <button class="pill-btn" id="brain-auto" onclick="switchBrain('auto')">Auto</button>
+        <button class="pill-btn" id="brain-quick" onclick="switchBrain('quick')">Quick</button>
+        <button class="pill-btn" id="brain-smart" onclick="switchBrain('smart')">Smart</button>
+        <button class="pill-btn" id="brain-coder" onclick="switchBrain('coder')">Coder</button>
+      </div>
+      <div class="pill-group" title="Preview orb state or follow live pipeline">
+        <button class="pill-btn active" id="sim-live" onclick="setSimState(null)">Live</button>
+        <button class="pill-btn" id="sim-idle" onclick="setSimState('idle')">Idle</button>
+        <button class="pill-btn" id="sim-listening" onclick="setSimState('listening')">Listen</button>
+        <button class="pill-btn" id="sim-thinking" onclick="setSimState('thinking')">Think</button>
+        <button class="pill-btn" id="sim-speaking" onclick="setSimState('speaking')">Speak</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Left Column: Fast-Path Radar & Pipeline Signals -->
+  <aside class="side-col" id="left-col">
+    <div class="section-head">
+      <h1>COGNITIVE RADAR</h1>
+      <p>Real-Time Voice &amp; Routing Health Overview</p>
+    </div>
+
+    <div class="card">
+      <div class="card-title">
+        <span>FAST-PATH EFFICIENCY</span>
+        <span id="routing-mode-badge" style="color: var(--emerald);">Auto Brain</span>
+      </div>
+      <div class="hero-metric">
+        <div class="hero-val" id="fast-rate-val">100%</div>
+        <div class="hero-sub" id="avg-ms-sub">avg 12 ms per turn</div>
+      </div>
+      <canvas id="sparkline-canvas" width="280" height="58" style="width:100%; height:58px;"></canvas>
+      <div class="stat-split">
+        <div>
+          <div class="stat-label">LOGGED TURNS</div>
+          <div class="stat-num" id="total-turns-val">0</div>
+        </div>
+        <div>
+          <div class="stat-label">PIPELINE STATE</div>
+          <div class="stat-num emerald" id="live-state-val">Listening Ready</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card grow">
+      <div class="card-title">
+        <span>PIPELINE SIGNALS</span>
+        <span id="active-voice-label">voice: default</span>
+      </div>
+      <div class="signal-list">
+        <div class="signal-row">
+          <span class="signal-name"><span class="sig-dot"></span>Hear (Whisper STT)</span>
+          <span class="signal-val"><span id="sig-hear">0 ms</span><span class="signal-badge">CPU</span></span>
+        </div>
+        <div class="signal-row">
+          <span class="signal-name"><span class="sig-dot" style="background:var(--violet)"></span>Think (Router / Brain)</span>
+          <span class="signal-val"><span id="sig-think">0 ms</span><span class="signal-badge" id="sig-brain-tag">qwen3:4b</span></span>
+        </div>
+        <div class="signal-row">
+          <span class="signal-name"><span class="sig-dot" style="background:var(--pink)"></span>Speak (Kokoro TTS)</span>
+          <span class="signal-val"><span id="sig-speak">0 ms</span><span class="signal-badge">24 kHz</span></span>
+        </div>
+        <div class="signal-row">
+          <span class="signal-name"><span class="sig-dot" style="background:var(--emerald)"></span>Wake Word Score</span>
+          <span class="signal-val"><span id="sig-wake">0.00</span><span class="signal-badge">≥ 0.50</span></span>
+        </div>
+        <div class="signal-row">
+          <span class="signal-name"><span class="sig-dot" style="background:var(--amber)"></span>Vault &amp; Memory</span>
+          <span class="signal-val"><span id="sig-knowledge">0 notes</span><span class="signal-badge" id="sig-facts">0 facts</span></span>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Right Column: Latency Trends, Route Distribution, Predictive Outlook -->
+  <aside class="side-col" id="right-col">
+    <div class="card">
+      <div class="card-title">
+        <span>LATENCY TRENDS (MS)</span>
+        <span style="color:var(--cyan)">Recent Turns</span>
+      </div>
+      <canvas id="trend-canvas" width="280" height="110" style="width:100%; height:110px;"></canvas>
+    </div>
+
+    <div class="card">
+      <div class="card-title">
+        <span>ROUTE DISTRIBUTION</span>
+        <span id="route-top-label">Fast Path</span>
+      </div>
+      <div class="donut-wrap">
+        <canvas id="donut-canvas" width="104" height="104" style="width:104px; height:104px;"></canvas>
+        <div class="legend-list">
+          <div class="legend-row">
+            <span class="legend-key"><span class="swatch" style="background:#34d399"></span>Fast Path</span>
+            <span id="leg-fast">0%</span>
+          </div>
+          <div class="legend-row">
+            <span class="legend-key"><span class="swatch" style="background:#38bdf8"></span>Brain / Chat</span>
+            <span id="leg-llm">0%</span>
+          </div>
+          <div class="legend-row">
+            <span class="legend-key"><span class="swatch" style="background:#a855f7"></span>2-Step Agent</span>
+            <span id="leg-agent">0%</span>
+          </div>
+          <div class="legend-row">
+            <span class="legend-key"><span class="swatch" style="background:#fbbf24"></span>Vault Notes</span>
+            <span id="leg-notes">0%</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card grow">
+      <div class="card-title">
+        <span>LATEST TURN &amp; FRICTION</span>
+        <span id="last-turn-source" style="color:var(--emerald)">fast</span>
+      </div>
+      <div style="font-size:12.5px; color:var(--text); line-height:1.45;" id="last-turn-box">
+        Say <strong>"Adeola, open Brave"</strong> or press any letter key in Orb mode to interact.
+      </div>
+      <div style="margin-top:auto; padding-top:8px; border-top:1px solid var(--border-subtle); font-size:11.5px; color:var(--dim);" id="friction-box">
+        No recent friction or misheard commands found.
+      </div>
+    </div>
+  </aside>
+
+  <!-- Secondary Tab Views (Conversation, Memory & Notes, Traces) -->
+  <section id="tab-panel">
+    <div class="tab-view" id="view-conversation">
+      <div class="card-title"><span>CONVERSATION &amp; VOICE LOG</span><span id="conv-count">0 turns</span></div>
+      <div class="scroll-area" id="conv-list"></div>
+    </div>
+
+    <div class="tab-view" id="view-memory">
+      <div class="card-title"><span>STORED MEMORY FACTS &amp; OBSIDIAN VAULT</span><span id="mem-count">0 items</span></div>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; height:100%; overflow:hidden;">
+        <div class="scroll-area" id="facts-list"></div>
+        <div class="scroll-area" id="notes-list"></div>
+      </div>
+    </div>
+
+    <div class="tab-view" id="view-traces">
+      <div class="card-title"><span>OPENJARVIS SQLITE TRACE STORE</span><span>Last 25 Turns</span></div>
+      <div class="scroll-area">
+        <table class="trace-table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Command</th>
+              <th>Route</th>
+              <th>Brain</th>
+              <th>Steps</th>
+              <th>Latency</th>
+              <th>Reply</th>
+            </tr>
+          </thead>
+          <tbody id="traces-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- Bottom Insight Bar & Navigation Tabs -->
+  <footer id="bottom-dock">
+    <div id="insight-bar">
+      <div class="insight-left">
+        <span class="insight-tag">INSIGHT</span>
+        <span class="insight-mid" id="insight-summary">Loading telemetry from Adeola's local trace store...</span>
+      </div>
+      <form class="dock-form" onsubmit="submitDock(event)">
+        <input class="dock-input" id="dock-input" type="text" placeholder="Ask or command Adeola..." autocomplete="off" />
+        <button class="dock-btn" type="submit">Send →</button>
+      </form>
+    </div>
+
+    <div id="tab-bar">
+      <div class="tabs-left">
+        <button class="tab-btn active" data-tab="overview" onclick="selectTab('overview')">Overview</button>
+        <button class="tab-btn" data-tab="conversation" onclick="selectTab('conversation')">Conversation</button>
+        <button class="tab-btn" data-tab="memory" onclick="selectTab('memory')">Memory &amp; Vault</button>
+        <button class="tab-btn" data-tab="traces" onclick="selectTab('traces')">Traces</button>
+      </div>
+      <div class="sync-meta" id="sync-meta">Local SSE Stream · 100% Offline</div>
+    </div>
+  </footer>
+
+  <script>
+    /* ── Auth & API Helpers ──────────────────────────────────────── */
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("token") || localStorage.getItem("adeola_token") || "";
+    if (params.get("token")) localStorage.setItem("adeola_token", token);
+
+    function apiHeaders() {
+      const h = { "Content-Type": "application/json" };
+      if (token) h["X-Adeola-Token"] = token;
+      return h;
+    }
+
+    /* ── Live Orb State & Smooth Interpolation ───────────────────── */
+    const STATE_PROFILES = {
+      idle:      { speed: 0.55, swirl: 1.15, brightness: 0.72, rim: [0.22, 0.48, 1.00], core: [0.38, 0.25, 0.92] },
+      wake:      { speed: 1.65, swirl: 2.10, brightness: 1.25, rim: [0.35, 0.85, 1.00], core: [0.85, 0.35, 1.00] },
+      listening: { speed: 1.35, swirl: 1.85, brightness: 1.12, rim: [0.95, 0.32, 0.88], core: [0.28, 0.68, 1.00] },
+      thinking:  { speed: 2.20, swirl: 2.85, brightness: 1.18, rim: [0.72, 0.28, 1.00], core: [1.00, 0.28, 0.75] },
+      tool:      { speed: 1.80, swirl: 2.20, brightness: 1.15, rim: [0.20, 0.92, 0.68], core: [0.25, 0.65, 1.00] },
+      speaking:  { speed: 1.75, swirl: 2.25, brightness: 1.32, rim: [1.00, 0.36, 0.86], core: [0.62, 0.32, 1.00] },
+      offline:   { speed: 0.20, swirl: 0.70, brightness: 0.14, rim: [0.15, 0.22, 0.45], core: [0.10, 0.12, 0.28] }
+    };
+
+    let liveState = "idle";
+    let simState = null;
+    let targetLevel = 0.0;
+    let smoothLevel = 0.0;
+    let curSpeed = 0.55, curSwirl = 1.15, curBright = 0.72;
+    let curRim = [0.22, 0.48, 1.00];
+    let curCore = [0.38, 0.25, 0.92];
+    let phaseTime = 0.0;
+
+    function effectiveState() {
+      return simState || liveState || "idle";
+    }
+
+    function setSimState(st) {
+      simState = st;
+      for (const id of ["live", "idle", "listening", "thinking", "speaking"]) {
+        const el = document.getElementById("sim-" + id);
+        if (el) el.classList.toggle("active", (st === null && id === "live") || st === id);
+      }
+    }
+
+    /* ── WebGL Plasma Orb Shader (Matches presence-reference.mp4) ── */
+    const orbCanvas = document.getElementById("orb-canvas");
+    const gl = orbCanvas.getContext("webgl", { alpha: true, antialias: true, premultipliedAlpha: false });
+
+    const VS_SRC = `
+      attribute vec2 a_pos;
+      varying vec2 v_uv;
+      void main() {
+        v_uv = a_pos;
+        gl_Position = vec4(a_pos, 0.0, 1.0);
+      }
+    `;
+
+    const FS_SRC = `
+      precision highp float;
+      varying vec2 v_uv;
+      uniform float u_time;
+      uniform float u_swirl;
+      uniform float u_bright;
+      uniform float u_level;
+      uniform vec3 u_rim;
+      uniform vec3 u_core;
+
+      float hash(vec3 p) {
+        p = fract(p * 0.3183099 + 0.1);
+        p *= 17.0;
+        return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+      }
+
+      float noise(vec3 x) {
+        vec3 i = floor(x);
+        vec3 f = fract(x);
+        f = f * f * (3.0 - 2.0 * f);
+        return mix(
+          mix(mix(hash(i + vec3(0,0,0)), hash(i + vec3(1,0,0)), f.x),
+              mix(hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),
+          mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x),
+              mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y),
+          f.z
+        );
+      }
+
+      float fbm(vec3 p) {
+        float v = 0.0;
+        float a = 0.52;
+        for (int i = 0; i < 4; i++) {
+          v += a * noise(p);
+          p = p * 2.04 + vec3(1.7, -1.2, 0.9);
+          a *= 0.5;
+        }
+        return v;
+      }
+
+      void main() {
+        float r = length(v_uv);
+        float radius = 0.76 + u_level * 0.045;
+        vec2 p = v_uv / radius;
+        float pr = length(p);
+
+        // Soft outer atmospheric bloom outside the sphere
+        if (pr >= 1.0) {
+          float halo = exp(-7.5 * (pr - 1.0)) * 0.62 * u_bright;
+          vec3 haloCol = mix(u_core, u_rim, 0.65) * halo;
+          gl_FragColor = vec4(haloCol, clamp(halo, 0.0, 1.0));
+          return;
+        }
+
+        // 3D sphere normal
+        float z = sqrt(max(0.0, 1.0 - pr * pr));
+        vec3 n = vec3(p.x, p.y, z);
+
+        // Domain-warped S-curve plasma ribbon inside the sphere
+        float t = u_time;
+        float angle = atan(p.y, p.x) + pr * u_swirl * 1.6 - t * 0.55;
+        vec3 q = vec3(
+          p.x * 1.6 + sin(p.y * 2.6 + t * 0.9) * 0.42,
+          p.y * 1.5 + cos(p.x * 2.2 - t * 0.7) * 0.38,
+          z * 1.3 + t * 0.45
+        );
+        float w1 = fbm(q + vec3(0.0, t * 0.35, 0.0));
+        float w2 = fbm(q * 1.45 + vec3(w1 * 1.9, -t * 0.4, w1));
+
+        // S-shaped plasma filament from bottom pole up to upper crest
+        float sCurve = p.x + 0.48 * sin(p.y * 3.1 - t * 1.1 + w1 * 2.2);
+        float ribbon = exp(-8.5 * sCurve * sCurve) * smoothstep(0.05, 0.95, z + 0.25);
+        ribbon += exp(-14.0 * pow(sCurve - 0.18 * cos(t + p.y * 2.0), 2.0)) * (0.55 + 0.65 * u_level);
+
+        // Bottom energy well flare (as seen in presence-reference.mp4)
+        vec2 wellPos = vec2(0.05 * sin(t * 0.8), -0.68);
+        float well = exp(-6.5 * dot(p - wellPos, p - wellPos)) * (0.75 + 0.55 * u_level);
+
+        // Sharp luminous Fresnel rim (strongest along upper-left & right arcs)
+        float fresnel = pow(1.0 - z, 2.55);
+        float topBias = smoothstep(-0.65, 0.75, p.y);
+        float rimGlow = fresnel * (0.75 + 0.65 * topBias) + pow(1.0 - z, 6.0) * 0.85;
+
+        // Combine colors: deep dark void interior + ribbon + rim + bottom flare
+        vec3 col = vec3(0.01, 0.01, 0.03);
+        vec3 ribbonCol = mix(u_core, u_rim, clamp(p.y * 0.5 + 0.5 + w2 * 0.3, 0.0, 1.0));
+        col += ribbonCol * ribbon * (0.95 + 0.55 * w2);
+        col += mix(u_rim, vec3(1.0, 0.88, 1.0), 0.42) * well;
+        col += mix(u_core, u_rim, 0.5 + 0.5 * p.y) * rimGlow * 1.28;
+
+        // Specular highlight along top-left arc
+        float spec = pow(max(0.0, dot(n, normalize(vec3(-0.38, 0.68, 0.62)))), 14.0);
+        col += vec3(1.0, 0.85, 1.0) * spec * 0.55;
+
+        col *= u_bright * (1.0 + u_level * 0.35);
+        float alpha = clamp(rimGlow + ribbon * 0.85 + well * 0.8 + 0.18, 0.0, 1.0);
+        gl_FragColor = vec4(col, alpha);
+      }
+    `;
+
+    let prog = null, uLocs = {};
+    if (gl) {
+      function compile(type, src) {
+        const s = gl.createShader(type);
+        gl.shaderSource(s, src);
+        gl.compileShader(s);
+        return s;
+      }
+      prog = gl.createProgram();
+      gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS_SRC));
+      gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS_SRC));
+      gl.linkProgram(prog);
+      gl.useProgram(prog);
+
+      const buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+      const aPos = gl.getAttribLocation(prog, "a_pos");
+      gl.enableVertexAttribArray(aPos);
+      gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+      for (const name of ["u_time", "u_swirl", "u_bright", "u_level", "u_rim", "u_core"]) {
+        uLocs[name] = gl.getUniformLocation(prog, name);
+      }
+    }
+
+    function resizeOrb() {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const rect = orbCanvas.getBoundingClientRect();
+      const w = Math.max(300, Math.floor(rect.width * dpr));
+      const h = Math.max(300, Math.floor(rect.height * dpr));
+      if (orbCanvas.width !== w || orbCanvas.height !== h) {
+        orbCanvas.width = w;
+        orbCanvas.height = h;
+      }
+      const avCanvas = document.getElementById("avatar-canvas");
+      if (avCanvas && (avCanvas.width !== w || avCanvas.height !== h)) {
+        avCanvas.width = w;
+        avCanvas.height = h;
+      }
+    }
+    window.addEventListener("resize", resizeOrb);
+    resizeOrb();
+
+    /* ── Adeola v1 Avatar Renderer (adeola-v1.avatar.json) ──────── */
+    let avatarDef = null;
+    let visualMode = "orb";
+    const STATE_EXPRESSIONS = {
+      idle: "neutral",
+      wake: "small-attentive",
+      listening: "curious-left",
+      thinking: "upward-side-glance",
+      tool: "downward-gaze",
+      speaking: "joyful-wide",
+      offline: "drowsy-closed"
+    };
+    let avHead = { x: 0, y: 0, z: 0 };
+    let avEyes = {
+      lw: 20, lh: 50, lx: 0, ly: -7, la: 0,
+      rw: 20, rh: 50, rx: 0, ry: -7, ra: 0,
+      spacing: 35
+    };
+    let nextBlinkAt = performance.now() + 2800;
+
+    function setVisualMode(mode) {
+      visualMode = mode === "avatar" && avatarDef ? "avatar" : "orb";
+      document.body.classList.toggle("avatar-mode", visualMode === "avatar");
+      const bOrb = document.getElementById("vis-orb");
+      const bAv = document.getElementById("vis-avatar");
+      if (bOrb) bOrb.classList.toggle("active", visualMode === "orb");
+      if (bAv) bAv.classList.toggle("active", visualMode === "avatar");
+    }
+
+    async function loadAvatar() {
+      try {
+        const res = await fetch("/api/avatar", { headers: apiHeaders() });
+        if (!res.ok) return;
+        avatarDef = await res.json();
+      } catch (_) {}
+    }
+
+    function rot3D(v, rxDeg, ryDeg, rzDeg) {
+      const rx = rxDeg * Math.PI / 180;
+      const ry = ryDeg * Math.PI / 180;
+      const rz = rzDeg * Math.PI / 180;
+      let [x, y, z] = v;
+      // Rotate X
+      let y1 = y * Math.cos(rx) - z * Math.sin(rx);
+      let z1 = y * Math.sin(rx) + z * Math.cos(rx);
+      y = y1; z = z1;
+      // Rotate Y
+      let x2 = x * Math.cos(ry) + z * Math.sin(ry);
+      let z2 = -x * Math.sin(ry) + z * Math.cos(ry);
+      x = x2; z = z2;
+      // Rotate Z
+      let x3 = x * Math.cos(rz) - y * Math.sin(rz);
+      let y3 = x * Math.sin(rz) + y * Math.cos(rz);
+      return [x3, y3, z];
+    }
+
+    function drawCapsule(ctx, x, y, w, h, angleRad, fill) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(angleRad);
+      const r = Math.min(w, h) * 0.5;
+      ctx.beginPath();
+      ctx.roundRect(-w / 2, -h / 2, w, h, r);
+      ctx.fillStyle = fill;
+      ctx.fill();
+      ctx.restore();
+    }
+
+    function drawAvatar(now) {
+      if (visualMode !== "avatar" || !avatarDef) return;
+      const c = document.getElementById("avatar-canvas");
+      const ctx = c.getContext("2d");
+      const w = c.width, h = c.height;
+      ctx.clearRect(0, 0, w, h);
+
+      const st = effectiveState();
+      const exprs = avatarDef.expressions || {};
+      let exprName = STATE_EXPRESSIONS[st] || "neutral";
+      if (st === "idle" && now > nextBlinkAt) {
+        if (now < nextBlinkAt + 140) exprName = "eyes-closed";
+        else nextBlinkAt = now + 2600 + Math.random() * 2600;
+      }
+      const target = exprs[exprName] || exprs.neutral;
+      if (!target) return;
+
+      const k = 0.14;
+      avHead.x += (target.head.x - avHead.x) * k;
+      avHead.y += (target.head.y - avHead.y) * k;
+      avHead.z += (target.head.z - avHead.z) * k;
+
+      const te = target.eyes;
+      avEyes.lw += (te.left.width - avEyes.lw) * k;
+      avEyes.lh += (te.left.height - avEyes.lh) * k;
+      avEyes.lx += (te.left.x - avEyes.lx) * k;
+      avEyes.ly += (te.left.y - avEyes.ly) * k;
+      avEyes.la += (te.left.angle - avEyes.la) * k;
+      avEyes.rw += (te.right.width - avEyes.rw) * k;
+      avEyes.rh += (te.right.height - avEyes.rh) * k;
+      avEyes.rx += (te.right.x - avEyes.rx) * k;
+      avEyes.ry += (te.right.y - avEyes.ry) * k;
+      avEyes.ra += (te.right.angle - avEyes.ra) * k;
+      avEyes.spacing += (te.spacing - avEyes.spacing) * k;
+
+      const scale = Math.min(w, h) / 420;
+      const bodyCol = (avatarDef.colors && avatarDef.colors.body) || "#d462fe";
+      const eyeCol = (avatarDef.colors && avatarDef.colors.eyes) || "#462020";
+      const floatY = Math.sin(now * 0.0022) * 5 * scale;
+      const pulse = 1.0 + smoothLevel * 0.06;
+      const cx = w / 2;
+      const cy = h / 2 + floatY;
+
+      // Ambient glow behind avatar
+      const aura = ctx.createRadialGradient(cx, cy, 40 * scale, cx, cy, 195 * scale);
+      aura.addColorStop(0, "rgba(212, 98, 254, 0.28)");
+      aura.addColorStop(1, "rgba(0, 0, 0, 0)");
+      ctx.fillStyle = aura;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 195 * scale, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Sort capsule nodes + primary sphere by rotated Z depth
+      const items = [{ kind: "sphere", z: 0 }];
+      for (const node of (avatarDef.body && avatarDef.body.nodes) || []) {
+        const p = rot3D(node.position, avHead.x, avHead.y, avHead.z);
+        items.push({ kind: "node", node, pos: p, z: p[2] });
+      }
+      items.sort((a, b) => a.z - b.z);
+
+      for (const it of items) {
+        if (it.kind === "node") {
+          const nw = it.node.surface.width * scale * pulse;
+          const nh = it.node.surface.height * scale * pulse;
+          const nx = cx + it.pos[0] * scale * pulse;
+          const ny = cy - it.pos[1] * scale * pulse;
+          const nAng = ((it.node.rotation[2] || 0) + avHead.z) * Math.PI / 180;
+          const grad = ctx.createRadialGradient(nx - nw * 0.22, ny - nh * 0.22, nw * 0.1, nx, ny, Math.max(nw, nh) * 0.75);
+          grad.addColorStop(0, "#f5b8ff");
+          grad.addColorStop(0.45, bodyCol);
+          grad.addColorStop(1, "#5c1786");
+          drawCapsule(ctx, nx, ny, nw, nh, nAng, grad);
+        } else {
+          const r = ((avatarDef.body.primary.width || 240) * 0.5) * scale * pulse;
+          const sGrad = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.32, r * 0.12, cx, cy, r);
+          sGrad.addColorStop(0, "#f6c6ff");
+          sGrad.addColorStop(0.42, bodyCol);
+          sGrad.addColorStop(0.88, "#7e22ce");
+          sGrad.addColorStop(1, "#4c1073");
+          ctx.fillStyle = sGrad;
+          ctx.beginPath();
+          ctx.arc(cx, cy, r, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Face eyes projected onto sphere front using head rotation
+          const faceShiftX = Math.sin(avHead.y * Math.PI / 180) * r * 0.72;
+          const faceShiftY = -Math.sin(avHead.x * Math.PI / 180) * r * 0.55;
+          ctx.save();
+          ctx.translate(cx + faceShiftX, cy + faceShiftY);
+          ctx.rotate((avHead.z * Math.PI) / 180);
+
+          const sp = avEyes.spacing * scale * pulse;
+          drawCapsule(
+            ctx,
+            -sp + avEyes.lx * scale,
+            avEyes.ly * scale,
+            Math.max(4, avEyes.lw * scale),
+            Math.max(4, avEyes.lh * scale),
+            (avEyes.la * Math.PI) / 180,
+            eyeCol
+          );
+          drawCapsule(
+            ctx,
+            sp + avEyes.rx * scale,
+            avEyes.ry * scale,
+            Math.max(4, avEyes.rw * scale),
+            Math.max(4, avEyes.rh * scale),
+            (avEyes.ra * Math.PI) / 180,
+            eyeCol
+          );
+          ctx.restore();
+        }
+      }
+    }
+
+    /* ── 3D Orbit Rings & Particle Trails around the Radar ──────── */
+    const orbitCanvas = document.getElementById("orbit-canvas");
+    const octx = orbitCanvas.getContext("2d");
+    const ORBIT_PARTICLES = Array.from({ length: 90 }, (_, i) => ({
+      angle: (i / 90) * Math.PI * 2,
+      speed: 0.004 + (i % 5) * 0.0018,
+      ring: i % 2,
+      size: 1.2 + (i % 3) * 0.8
+    }));
+
+    function drawOrbitRings() {
+      if (!document.body.classList.contains("dashboard-open")) return;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const rect = orbitCanvas.getBoundingClientRect();
+      const w = Math.max(200, Math.floor(rect.width * dpr));
+      const h = Math.max(200, Math.floor(rect.height * dpr));
+      if (orbitCanvas.width !== w || orbitCanvas.height !== h) {
+        orbitCanvas.width = w;
+        orbitCanvas.height = h;
+      }
+      octx.save();
+      octx.clearRect(0, 0, w, h);
+      octx.translate(w / 2, h / 2);
+
+      // Subtle crosshair axes
+      octx.strokeStyle = "rgba(148, 163, 184, 0.12)";
+      octx.lineWidth = 1;
+      octx.beginPath();
+      octx.moveTo(-w * 0.42, 0); octx.lineTo(w * 0.42, 0);
+      octx.moveTo(0, -h * 0.42); octx.lineTo(0, h * 0.42);
+      octx.stroke();
+
+      // Tilted elliptical orbit tracks (like Elius reference)
+      octx.rotate(-0.48);
+      const rx1 = w * 0.39, ry1 = h * 0.21;
+      const rx2 = w * 0.29, ry2 = h * 0.14;
+
+      octx.strokeStyle = "rgba(56, 189, 248, 0.22)";
+      octx.lineWidth = 1.4 * dpr;
+      octx.beginPath();
+      octx.ellipse(0, 0, rx1, ry1, 0, 0, Math.PI * 2);
+      octx.stroke();
+
+      octx.strokeStyle = "rgba(52, 211, 153, 0.24)";
+      octx.beginPath();
+      octx.ellipse(0, 0, rx2, ry2, 0, 0, Math.PI * 2);
+      octx.stroke();
+
+      for (const pt of ORBIT_PARTICLES) {
+        pt.angle += pt.speed * (1 + smoothLevel * 1.5);
+        const rx = pt.ring === 0 ? rx1 : rx2;
+        const ry = pt.ring === 0 ? ry1 : ry2;
+        const x = Math.cos(pt.angle) * rx;
+        const y = Math.sin(pt.angle) * ry;
+        octx.fillStyle = pt.ring === 0 ? "rgba(56, 189, 248, 0.85)" : "rgba(52, 211, 153, 0.85)";
+        octx.beginPath();
+        octx.arc(x, y, pt.size * dpr, 0, Math.PI * 2);
+        octx.fill();
+      }
+      octx.restore();
+    }
+
+    /* ── Animation Loop ──────────────────────────────────────────── */
+    let lastFrame = performance.now();
+    function animate(now) {
+      const dt = Math.min(0.05, (now - lastFrame) / 1000);
+      lastFrame = now;
+
+      const st = effectiveState();
+      const prof = STATE_PROFILES[st] || STATE_PROFILES.idle;
+      const simPulse = simState
+        ? (simState === "speaking" || simState === "listening"
+            ? 0.35 + 0.3 * Math.sin(now * 0.008) + 0.15 * Math.cos(now * 0.019)
+            : 0.12)
+        : targetLevel;
+
+      smoothLevel += (simPulse - smoothLevel) * 0.16;
+      curSpeed += (prof.speed - curSpeed) * 0.08;
+      curSwirl += (prof.swirl - curSwirl) * 0.08;
+      curBright += (prof.brightness - curBright) * 0.08;
+      for (let i = 0; i < 3; i++) {
+        curRim[i] += (prof.rim[i] - curRim[i]) * 0.08;
+        curCore[i] += (prof.core[i] - curCore[i]) * 0.08;
+      }
+      phaseTime += dt * curSpeed;
+
+      if (gl && prog) {
+        gl.viewport(0, 0, orbCanvas.width, orbCanvas.height);
+        gl.clearColor(0, 0, 0, 0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.uniform1f(uLocs.u_time, phaseTime);
+        gl.uniform1f(uLocs.u_swirl, curSwirl);
+        gl.uniform1f(uLocs.u_bright, curBright);
+        gl.uniform1f(uLocs.u_level, smoothLevel);
+        gl.uniform3fv(uLocs.u_rim, curRim);
+        gl.uniform3fv(uLocs.u_core, curCore);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      }
+
+      drawAvatar(now);
+      drawOrbitRings();
+      requestAnimationFrame(animate);
+    }
+    requestAnimationFrame(animate);
+
+    /* ── Hand-Drawn Dashboard Charts (Canvas) ────────────────────── */
+    function drawSparkline(values) {
+      const c = document.getElementById("sparkline-canvas");
+      const ctx = c.getContext("2d");
+      const w = c.width, h = c.height;
+      ctx.clearRect(0, 0, w, h);
+      const pts = (values && values.length > 1) ? values : [12, 18, 15, 22, 14, 11, 16, 12];
+      const max = Math.max(...pts, 50);
+      const min = Math.min(...pts, 0);
+      const span = Math.max(1, max - min);
+
+      ctx.beginPath();
+      pts.forEach((v, i) => {
+        const x = (i / (pts.length - 1)) * (w - 8) + 4;
+        const y = h - 8 - ((v - min) / span) * (h - 18);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.strokeStyle = "#34d399";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.lineTo(w - 4, h);
+      ctx.lineTo(4, h);
+      ctx.closePath();
+      const grad = ctx.createLinearGradient(0, 0, 0, h);
+      grad.addColorStop(0, "rgba(52, 211, 153, 0.32)");
+      grad.addColorStop(1, "rgba(52, 211, 153, 0.0)");
+      ctx.fillStyle = grad;
+      ctx.fill();
+    }
+
+    function drawTrendChart(traces) {
+      const c = document.getElementById("trend-canvas");
+      const ctx = c.getContext("2d");
+      const w = c.width, h = c.height;
+      ctx.clearRect(0, 0, w, h);
+
+      // Grid lines
+      ctx.strokeStyle = "rgba(148, 163, 184, 0.1)";
+      ctx.lineWidth = 1;
+      for (let i = 1; i <= 3; i++) {
+        const y = (h / 4) * i;
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+      }
+
+      const chron = (traces && traces.length) ? [...traces].reverse().slice(-16) : [];
+      const seriesTotal = chron.length > 1 ? chron.map(t => t.ms || 10) : [18, 45, 22, 15, 12, 28, 14, 11];
+      const seriesFast = chron.length > 1
+        ? chron.map(t => (t.source === "fast" ? 10 : Math.min(40, t.ms * 0.25)))
+        : [8, 10, 9, 8, 7, 9, 8, 7];
+
+      const max = Math.max(...seriesTotal, 60);
+      function plotLine(arr, color) {
+        ctx.beginPath();
+        arr.forEach((v, i) => {
+          const x = (i / Math.max(1, arr.length - 1)) * (w - 14) + 7;
+          const y = h - 10 - (Math.min(v, max) / max) * (h - 22);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+      plotLine(seriesTotal, "#38bdf8");
+      plotLine(seriesFast, "#34d399");
+    }
+
+    function drawDonut(mix, total) {
+      const c = document.getElementById("donut-canvas");
+      const ctx = c.getContext("2d");
+      const w = c.width, h = c.height;
+      const cx = w / 2, cy = h / 2, r = 38;
+      ctx.clearRect(0, 0, w, h);
+
+      const segments = [
+        { val: (mix && mix.fast) || 0, color: "#34d399" },
+        { val: (mix && mix.llm) || 0, color: "#38bdf8" },
+        { val: (mix && mix.agent) || 0, color: "#a855f7" },
+        { val: (mix && mix.notes) || 0, color: "#fbbf24" }
+      ];
+      const sum = segments.reduce((a, s) => a + s.val, 0) || 1;
+      let start = -Math.PI / 2;
+      ctx.lineWidth = 10;
+      for (const seg of segments) {
+        const sweep = (seg.val / sum) * Math.PI * 2;
+        if (sweep <= 0.001) continue;
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, start, start + sweep);
+        ctx.strokeStyle = seg.color;
+        ctx.stroke();
+        start += sweep;
+      }
+      if (!total) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.strokeStyle = "rgba(52, 211, 153, 0.5)";
+        ctx.stroke();
+      }
+      ctx.fillStyle = "#f8fafc";
+      ctx.font = "700 15px Inter, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(String(total || 0), cx, cy - 4);
+      ctx.fillStyle = "#64748b";
+      ctx.font = "500 9px Inter, sans-serif";
+      ctx.fillText("Turns", cx, cy + 10);
+    }
+
+    /* ── Telemetry Sync & SSE Live Stream ────────────────────────── */
+    async function loadTelemetry() {
+      try {
+        const res = await fetch("/api/telemetry", { headers: apiHeaders() });
+        if (!res.ok) return;
+        const d = await res.json();
+        renderTelemetry(d);
+      } catch (_) {}
+    }
+
+    function renderTelemetry(d) {
+      const st = d.status || {};
+      const m = d.metrics || {};
+      const live = d.live || {};
+
+      // Active brain pill highlight
+      const activeBrain = (st.brain || "smart").toLowerCase();
+      for (const b of ["auto", "quick", "smart", "coder"]) {
+        const btn = document.getElementById("brain-" + b);
+        if (!btn) continue;
+        if (b === "auto") btn.classList.toggle("active", !st.pinned);
+        else btn.classList.toggle("active", st.pinned && activeBrain === b);
+      }
+
+      document.getElementById("routing-mode-badge").textContent =
+        st.pinned ? ("Pinned · " + activeBrain) : ("Auto · " + activeBrain);
+      document.getElementById("fast-rate-val").textContent = (m.fast_hit_rate ?? 100) + "%";
+      document.getElementById("avg-ms-sub").textContent = "avg " + Math.round(m.avg_ms || 0) + " ms per turn";
+      document.getElementById("total-turns-val").textContent = String(m.total_turns || 0);
+      document.getElementById("active-voice-label").textContent = "voice: " + (st.voice || "default");
+
+      document.getElementById("sig-hear").textContent = Math.round(live.hear_ms || 0) + " ms";
+      document.getElementById("sig-think").textContent = Math.round(live.think_ms || m.avg_ms || 0) + " ms";
+      document.getElementById("sig-brain-tag").textContent = st.model || "fast";
+      document.getElementById("sig-speak").textContent = Math.round(live.speak_ms || 0) + " ms";
+      document.getElementById("sig-wake").textContent = Number(live.wake_score || 0).toFixed(2);
+      document.getElementById("sig-knowledge").textContent = ((st.counts && st.counts.notes) || 0) + " notes";
+      document.getElementById("sig-facts").textContent = ((st.counts && st.counts.facts) || 0) + " facts";
+
+      // Radar axes
+      if (Array.isArray(m.axes)) {
+        for (const ax of m.axes) {
+          const el = document.getElementById("axis-" + ax.key + "-sub");
+          if (el) el.textContent = ax.sub;
+        }
+      }
+
+      // Charts
+      drawSparkline(m.sparkline_ms || []);
+      drawTrendChart(d.traces || []);
+      const mix = m.route_mix || {};
+      const tot = Math.max(1, m.total_turns || 0);
+      drawDonut(mix, m.total_turns || 0);
+      document.getElementById("leg-fast").textContent = Math.round(((mix.fast || 0) / tot) * 100) + "%";
+      document.getElementById("leg-llm").textContent = Math.round(((mix.llm || 0) / tot) * 100) + "%";
+      document.getElementById("leg-agent").textContent = Math.round(((mix.agent || 0) / tot) * 100) + "%";
+      document.getElementById("leg-notes").textContent = Math.round(((mix.notes || 0) / tot) * 100) + "%";
+
+      // Insight & Friction
+      if (d.insight) {
+        document.getElementById("insight-summary").textContent = d.insight.summary;
+        document.getElementById("friction-box").textContent = d.insight.friction;
+      }
+
+      // Latest turn card
+      const traces = d.traces || [];
+      if (traces.length) {
+        const latest = traces[0];
+        document.getElementById("last-turn-source").textContent =
+          latest.source + " · " + Math.round(latest.ms) + " ms";
+        document.getElementById("last-turn-box").innerHTML =
+          `<div style="color:var(--cyan); font-weight:600; margin-bottom:3px;">“${escapeHtml(latest.raw_text)}”</div>` +
+          `<div>${escapeHtml(latest.reply)}</div>`;
+      }
+
+      // Populate Secondary Tabs
+      document.getElementById("conv-count").textContent = traces.length + " recent turns";
+      document.getElementById("conv-list").innerHTML = traces.map(t => `
+        <div class="chat-bubble">
+          <div class="q">You: ${escapeHtml(t.raw_text)}</div>
+          <div class="a">Adeola: ${escapeHtml(t.reply)}</div>
+          <div class="m">${escapeHtml(t.ts)} · route: ${escapeHtml(t.source)} · brain: ${escapeHtml(t.brain)} · ${Math.round(t.ms)} ms</div>
+        </div>
+      `).join("") || `<div class="chat-bubble">No turns recorded yet.</div>`;
+
+      const facts = d.facts || [];
+      const notes = d.recent_notes || [];
+      document.getElementById("mem-count").textContent = `${facts.length} facts · ${notes.length} recent notes`;
+      document.getElementById("facts-list").innerHTML =
+        `<div class="card-title"><span>SQLITE MEMORY FACTS</span></div>` +
+        (facts.map(f => `<div class="chat-bubble"><div class="a">${escapeHtml(f.text)}</div><div class="m">${escapeHtml(f.created)}</div></div>`).join("") || `<div class="chat-bubble">No saved facts yet.</div>`);
+      document.getElementById("notes-list").innerHTML =
+        `<div class="card-title"><span>OBSIDIAN VAULT NOTES</span></div>` +
+        (notes.map(n => `<div class="chat-bubble"><div class="q">${escapeHtml(n.title)}</div><div class="a">${escapeHtml(n.excerpt || "")}</div><div class="m">${escapeHtml(n.folder || "root")}</div></div>`).join("") || `<div class="chat-bubble">No vault notes indexed.</div>`);
+
+      document.getElementById("traces-tbody").innerHTML = traces.map(t => `
+        <tr>
+          <td style="color:var(--muted)">${escapeHtml((t.ts || "").slice(11, 19))}</td>
+          <td style="color:var(--cyan); font-weight:600;">${escapeHtml(t.clean_text)}</td>
+          <td>${escapeHtml(t.source)}</td>
+          <td>${escapeHtml(t.brain)}</td>
+          <td>${t.steps || 1}</td>
+          <td style="color:var(--emerald)">${Math.round(t.ms)} ms</td>
+          <td>${escapeHtml(t.reply)}</td>
+        </tr>
+      `).join("");
+    }
+
+    function escapeHtml(s) {
+      return String(s || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function connectEventStream() {
+      const url = token ? `/api/events?token=${encodeURIComponent(token)}` : "/api/events";
+      const es = new EventSource(url);
+      es.onmessage = (ev) => {
+        try {
+          const d = JSON.parse(ev.data);
+          if (d.state) {
+            liveState = d.state;
+            const stEl = document.getElementById("live-state-val");
+            if (stEl) stEl.textContent = d.state.charAt(0).toUpperCase() + d.state.slice(1);
+          }
+          if (typeof d.level === "number") targetLevel = d.level;
+          if (typeof d.wake_score === "number") {
+            const wEl = document.getElementById("sig-wake");
+            if (wEl) wEl.textContent = d.wake_score.toFixed(2);
+          }
+          if (typeof d.hear_ms === "number" && d.hear_ms > 0) {
+            document.getElementById("sig-hear").textContent = Math.round(d.hear_ms) + " ms";
+          }
+          if (typeof d.speak_ms === "number" && d.speak_ms > 0) {
+            document.getElementById("sig-speak").textContent = Math.round(d.speak_ms) + " ms";
+          }
+          if (d.type === "turn") {
+            loadTelemetry();
+          }
+        } catch (_) {}
+      };
+      es.onerror = () => {
+        es.close();
+        setTimeout(connectEventStream, 2500);
+      };
+    }
+
+    /* ── Interaction: Toggle Dashboard, Tabs, & Commands ─────────── */
+    function toggleDashboard() {
+      const open = document.body.classList.toggle("dashboard-open");
+      document.getElementById("toggle-label").textContent = open ? "Orb Mode" : "Analysis";
+      if (open) loadTelemetry();
+    }
+
+    function selectTab(tab) {
+      document.querySelectorAll(".tab-btn").forEach(b => {
+        b.classList.toggle("active", b.dataset.tab === tab);
+      });
+      const isAlt = tab !== "overview";
+      document.body.classList.toggle("tab-alt", isAlt);
+      for (const v of ["conversation", "memory", "traces"]) {
+        const el = document.getElementById("view-" + v);
+        if (el) el.classList.toggle("active", v === tab);
+      }
+    }
+
+    async function sendCommand(text) {
+      const clean = (text || "").trim();
+      if (!clean) return;
+      liveState = "thinking";
+      targetLevel = 0.4;
+      try {
+        await fetch("/api/chat", {
+          method: "POST",
+          headers: apiHeaders(),
+          body: JSON.stringify({ text: clean, speak_on_pc: true, return_audio: false })
+        });
+        await loadTelemetry();
+      } catch (_) {
+        liveState = "idle";
+        targetLevel = 0.0;
+      }
+    }
+
+    function switchBrain(name) {
+      if (name === "auto") sendCommand("use auto brain");
+      else sendCommand("switch to your " + name + " brain");
+    }
+
+    function submitDock(e) {
+      e.preventDefault();
+      const inp = document.getElementById("dock-input");
+      const val = inp.value;
+      inp.value = "";
+      sendCommand(val);
+    }
+
+    /* ── Orb Mode Mouse Auto-Hide & Type-Anywhere Composer ───────── */
+    let mouseTimer = null;
+    window.addEventListener("mousemove", () => {
+      document.body.classList.add("mouse-awake");
+      clearTimeout(mouseTimer);
+      mouseTimer = setTimeout(() => {
+        document.body.classList.remove("mouse-awake");
+      }, 2400);
+    });
+
+    const floatingComposer = document.getElementById("floating-composer");
+    const floatingInput = document.getElementById("floating-input");
+
+    function hideFloatingComposer() {
+      floatingComposer.classList.remove("visible");
+      floatingInput.value = "";
+      floatingInput.blur();
+    }
+
+    function submitFloating(e) {
+      e.preventDefault();
+      const val = floatingInput.value;
+      hideFloatingComposer();
+      sendCommand(val);
+    }
+
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "Tab") {
+        e.preventDefault();
+        toggleDashboard();
+        return;
+      }
+      if (e.key === "Escape") {
+        if (floatingComposer.classList.contains("visible")) {
+          hideFloatingComposer();
+        } else if (document.body.classList.contains("dashboard-open")) {
+          toggleDashboard();
+        }
+        return;
+      }
+      // In Orb Mode, pressing any printable character opens the floating input pill
+      const activeTag = document.activeElement ? document.activeElement.tagName : "";
+      if (activeTag === "INPUT" || activeTag === "TEXTAREA") return;
+      if (
+        !document.body.classList.contains("dashboard-open") &&
+        e.key.length === 1 &&
+        !e.ctrlKey && !e.metaKey && !e.altKey
+      ) {
+        floatingComposer.classList.add("visible");
+        floatingInput.focus();
+      } else if (document.body.classList.contains("dashboard-open") && e.key.toLowerCase() === "a") {
+        setVisualMode(visualMode === "orb" ? "avatar" : "orb");
+      }
+    });
+
+    loadAvatar();
+    loadTelemetry();
+    connectEventStream();
+  </script>
+</body>
+</html>
+

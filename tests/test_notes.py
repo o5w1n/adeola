@@ -237,6 +237,37 @@ class RouterNotesTests(unittest.TestCase):
         self.assertEqual(ACTION_TOOLS & OBSERVATION_TOOLS, set())
         self.assertEqual(ACTION_TOOLS | OBSERVATION_TOOLS, schema_names)
 
+    def test_recent_notes_and_last_note_added_to_vault_query(self):
+        import time
+        older = self.tmp / "Older Note.md"
+        older.write_text("Old content from last week.", encoding="utf-8")
+        os.utime(older, (time.time() - 3600, time.time() - 3600))
+        newest = self.tmp / "OpenJarvis Architecture.md"
+        newest.write_text("Added the 2-step agent loop and SQLite trace store.", encoding="utf-8")
+        now_ts = time.time() + 60
+        os.utime(newest, (now_ts, now_ts))
+        # Generated Graph/ mirror files should not crowd out curated notes in recent()
+        graph_dir = self.tmp / "Graph" / "Adeola"
+        graph_dir.mkdir(parents=True)
+        graph_note = graph_dir / "Adeola · Graph.md"
+        graph_note.write_text("Auto-generated graph mirror.", encoding="utf-8")
+        os.utime(graph_note, (now_ts + 120, now_ts + 120))
+        self.idx.load()
+
+        recent = self.idx.recent(limit=2)
+        self.assertEqual(recent[0].title, "OpenJarvis Architecture")
+
+        tb = Toolbox(FAKE_APPS, notes=self.idx)
+        recent_out = tb.run("search_notes", {"query": "last note added"})
+        self.assertIn("OpenJarvis Architecture", recent_out)
+
+        brain = FakeBrain(reply="The last note added was OpenJarvis Architecture.")
+        router = Router(tb, brain, self.idx)
+        res = run(router, "what was the last note that was added to my brain vault")
+        self.assertEqual(res.source, "notes")
+        self.assertIn("OpenJarvis Architecture", res.sources)
+        self.assertEqual(brain.seen_notes[0][0][0], "OpenJarvis Architecture")
+
 
 class BrainNotesTests(unittest.TestCase):
     def test_notes_block_sits_between_history_and_user(self):

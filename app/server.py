@@ -6,15 +6,22 @@ import base64
 import io
 import ipaddress
 import json
+import queue
 import socket
 import threading
 import urllib.parse
 import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import numpy as np
 
 from app import config
+from app.brain.traces import TraceAnalyzer
+from app.events import BUS
+
+_HUD_PATH = Path(__file__).resolve().parent / "ui" / "hud.html"
+_AVATAR_PATH = Path(__file__).resolve().parent.parent / "adeola-v1.avatar.json"
 
 _TAILSCALE_NET = ipaddress.ip_network("100.64.0.0/10")
 
@@ -497,12 +504,29 @@ class AdeolaServer:
         if route == "/":
             return 200, "text/html; charset=utf-8", COMPANION_HTML.encode("utf-8")
 
+        if route in ("/hud", "/orb"):
+            html = _HUD_PATH.read_text(encoding="utf-8") if _HUD_PATH.exists() else COMPANION_HTML
+            return 200, "text/html; charset=utf-8", html.encode("utf-8")
+
         if route == "/manifest.json":
             return (
                 200,
                 "application/manifest+json; charset=utf-8",
                 json.dumps(MANIFEST_JSON).encode("utf-8"),
             )
+
+        if route == "/api/events":
+            snap = {"type": "snapshot", **BUS.snapshot()}
+            payload = f"data: {json.dumps(snap)}\n\n".encode("utf-8")
+            return 200, "text/event-stream; charset=utf-8", payload
+
+        if route == "/api/telemetry":
+            return _json_response(200, self._build_telemetry())
+
+        if route == "/api/avatar":
+            if not _AVATAR_PATH.exists():
+                return _json_response(404, {"error": "Avatar definition not found"})
+            return 200, "application/json; charset=utf-8", _AVATAR_PATH.read_bytes()
 
         if route == "/api/status":
             tb = getattr(self.router, "toolbox", None)
@@ -546,6 +570,153 @@ class AdeolaServer:
             )
 
         return _json_response(404, {"error": "Not found"})
+
+    def _build_telemetry(self) -> dict:
+        tb = getattr(self.router, "toolbox", None)
+        mem = getattr(tb, "memory", None) if tb else None
+        notes_idx = getattr(self.router, "notes", None)
+        brain = getattr(self.router, "brain", None)
+        policy = getattr(self.router, "policy", None)
+        pinned = bool(getattr(policy, "pinned", False)) if policy else False
+        active_brain = self._active_brain_name()
+        live = BUS.snapshot()
+
+        traces = mem.recent_traces(limit=100) if (mem and hasattr(mem, "recent_traces")) else []
+        n_turns = len(traces)
+        n_fast = sum(1 for t in traces if t.source == "fast")
+        fast_rate = int(round((n_fast / n_turns) * 100)) if n_turns else 100
+        avg_ms = round(sum(t.ms for t in traces) / n_turns, 1) if n_turns else 0.0
+        chron = list(reversed(traces))
+        sparkline_ms = [round(t.ms, 1) for t in chron[-30:]]
+
+        route_mix = {"fast": 0, "llm": 0, "agent": 0, "notes": 0, "error": 0}
+        for t in traces:
+            if t.source == "fast":
+                route_mix["fast"] += 1
+            elif t.source == "agent":
+                route_mix["agent"] += 1
+            elif t.source == "notes":
+                route_mix["notes"] += 1
+            elif t.source in ("error", "none"):
+                route_mix["error"] += 1
+            else:
+                route_mix["llm"] += 1
+
+        n_apps = len(tb.apps.apps) if tb and tb.apps else 0
+        n_projects = len(tb.projects.all()) if tb and tb.projects else 0
+        n_notes = len(notes_idx.notes) if notes_idx else 0
+        facts_list = mem.facts() if mem else []
+        n_facts = len(facts_list)
+
+        axes = [
+            {
+                "key": "wake",
+                "label": "WAKE",
+                "sub": f"Score {live.get('wake_score', 0.0):.2f}",
+                "health": 0.95,
+            },
+            {
+                "key": "hear",
+                "label": "HEAR",
+                "sub": f"{live.get('hear_ms', 0.0):.0f} ms" if live.get("hear_ms") else "Whisper CPU",
+                "health": 0.92,
+            },
+            {
+                "key": "think",
+                "label": "THINK",
+                "sub": f"{active_brain.title()} · {avg_ms:.0f} ms",
+                "health": 0.90,
+            },
+            {
+                "key": "tools",
+                "label": "TOOLS",
+                "sub": f"{n_apps} apps · {fast_rate}% fast",
+                "health": 0.96,
+            },
+            {
+                "key": "speak",
+                "label": "SPEAK",
+                "sub": (
+                    f"{live.get('speak_ms', 0.0):.0f} ms · {self._active_voice_name()}"
+                    if live.get("speak_ms")
+                    else f"Kokoro · {self._active_voice_name()}"
+                ),
+                "health": 0.94,
+            },
+            {
+                "key": "memory",
+                "label": "MEMORY",
+                "sub": f"{n_facts} facts · {n_notes} notes",
+                "health": 0.98,
+            },
+        ]
+
+        analyzer = TraceAnalyzer(mem)
+        insight = {
+            "summary": analyzer.summary_report(auto_brain=not pinned, current_brain=active_brain),
+            "friction": analyzer.friction_report(),
+        }
+
+        recent_notes = []
+        if notes_idx is not None:
+            note_items = (
+                notes_idx.recent(limit=15)
+                if hasattr(notes_idx, "recent")
+                else list(notes_idx.notes)[:15]
+            )
+            for n in note_items:
+                recent_notes.append(
+                    {
+                        "title": n.title,
+                        "folder": n.folder,
+                        "excerpt": notes_idx.excerpt(n, n.title),
+                    }
+                )
+
+        return {
+            "status": {
+                "assistant": config.ASSISTANT_NAME,
+                "brain": active_brain,
+                "model": brain.model if brain else None,
+                "voice": self._active_voice_name(),
+                "pinned": pinned,
+                "counts": {
+                    "apps": n_apps,
+                    "projects": n_projects,
+                    "notes": n_notes,
+                    "facts": n_facts,
+                    "traces": n_turns,
+                },
+            },
+            "live": live,
+            "metrics": {
+                "total_turns": n_turns,
+                "fast_hit_rate": fast_rate,
+                "avg_ms": avg_ms,
+                "sparkline_ms": sparkline_ms,
+                "route_mix": route_mix,
+                "axes": axes,
+            },
+            "insight": insight,
+            "traces": [
+                {
+                    "id": t.id,
+                    "ts": t.ts,
+                    "raw_text": t.raw_text,
+                    "clean_text": t.clean_text,
+                    "source": t.source,
+                    "brain": t.brain,
+                    "calls": [{"tool": n, "args": a} for n, a in t.calls],
+                    "reply": t.reply,
+                    "ms": round(t.ms, 1),
+                    "tok_per_s": round(t.tok_per_s, 1),
+                    "steps": t.steps,
+                }
+                for t in traces[:25]
+            ],
+            "facts": [{"id": f.id, "text": f.text, "created": f.created} for f in facts_list],
+            "recent_notes": recent_notes,
+        }
 
     def _handle_post(
         self, route: str, body: bytes, headers: dict[str, str] | None = None
@@ -719,6 +890,38 @@ class AdeolaServer:
                 self.wfile.write(resp_bytes)
 
             def do_GET(self) -> None:  # noqa: N802
+                parsed = urllib.parse.urlparse(self.path)
+                if parsed.path == "/api/events":
+                    query = urllib.parse.parse_qs(parsed.query)
+                    hdrs = {k: v for k, v in self.headers.items()}
+                    if not server_ref._authorized(hdrs, query):
+                        self.send_response(401)
+                        self.send_header("Content-Type", "application/json; charset=utf-8")
+                        self.end_headers()
+                        self.wfile.write(b'{"error":"Unauthorized"}')
+                        return
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                    self.send_header("Cache-Control", "no-cache")
+                    self.send_header("Connection", "keep-alive")
+                    self.end_headers()
+                    q = BUS.subscribe()
+                    try:
+                        snap = {"type": "snapshot", **BUS.snapshot()}
+                        self.wfile.write(f"data: {json.dumps(snap)}\n\n".encode("utf-8"))
+                        self.wfile.flush()
+                        while server_ref._httpd is not None:
+                            try:
+                                evt = q.get(timeout=1.0)
+                                self.wfile.write(f"data: {json.dumps(evt)}\n\n".encode("utf-8"))
+                            except queue.Empty:
+                                self.wfile.write(b": keepalive\n\n")
+                            self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError, OSError):
+                        pass
+                    finally:
+                        BUS.unsubscribe(q)
+                    return
                 self._forward("GET")
 
             def do_POST(self) -> None:  # noqa: N802

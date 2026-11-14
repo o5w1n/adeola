@@ -10,6 +10,7 @@ import webbrowser
 from datetime import datetime
 
 from app import config
+from app.memory.notes import is_recency_query
 from app.memory.store import to_second_person
 from app.tools.applications import AppIndex, launch, normalize
 from app.tools.projects import open_project as _open_project_folder
@@ -209,6 +210,16 @@ class Toolbox:
         query = query.strip()
         if self.notes is None or not query:
             return f"Your notes don't mention {query or 'that'}."
+        if is_recency_query(query) and hasattr(self.notes, "recent"):
+            matches = self.notes.recent(limit=config.NOTES_IN_PROMPT)
+            if not matches:
+                return "You don't have any notes indexed yet."
+            parts = []
+            for n in matches:
+                dt = (datetime.fromtimestamp(n.mtime).strftime("%Y-%m-%d")
+                      if getattr(n, "mtime", 0) else "recent")
+                parts.append(f"{n.title} ({dt}): {self.notes.excerpt(n, query)}")
+            return " | ".join(parts)
         matches = self.notes.search(query, limit=config.NOTES_IN_PROMPT, min_score=1)
         if not matches:
             return f"Your notes don't mention {query}."

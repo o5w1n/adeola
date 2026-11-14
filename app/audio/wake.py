@@ -17,6 +17,7 @@ import numpy as np
 
 from app import config
 from app.audio.push_to_talk import beep
+from app.events import BUS
 
 BLOCK_SECONDS = 0.08
 SELF_TRIGGER_GUARD = 0.6  # seconds after Adeola stops talking before we listen again
@@ -114,9 +115,12 @@ class WakeWord:
         if score < threshold or self.is_busy():
             if not speaking:
                 self._preroll.append(block)
+            if score >= 0.12:
+                BUS.emit("level", state="idle", wake_score=score)
             return
         if self.verbose:
             self.say(f"   [wake word {score:.2f}]")
+        BUS.emit("state", state="wake", wake_score=score, level=min(1.0, rms * 10.0))
         if self.speaker:
             self.speaker.stop()
         self._start_capture(include_preroll=not speaking)
@@ -131,10 +135,12 @@ class WakeWord:
         self._finish_elapsed = 0.0
         beep(880)
         self.say("🎙  Listening...")
+        BUS.emit("state", state="listening", level=0.15)
 
     def _capture(self, block: np.ndarray, rms: float) -> None:
         self._audio.append(block)
         self._elapsed += BLOCK_SECONDS
+        BUS.emit("level", state="listening", level=min(1.0, rms * 12.0))
         speech_level = max(self.noise_floor * 3, 0.01)
         if rms > speech_level:
             self._heard_speech = True
@@ -179,6 +185,7 @@ class WakeWord:
         beep(440)
         audio = np.concatenate(self._audio)
         self.state = self.BUSY
+        BUS.emit("state", state="thinking", level=0.25)
         threading.Thread(target=self._handle, args=(audio,), daemon=True).start()
 
     def _handle(self, audio: np.ndarray) -> None:
@@ -217,3 +224,5 @@ class WakeWord:
             except queue.Empty:
                 break
         self.state = self.IDLE
+        if not (self.speaker and getattr(self.speaker, "speaking", False)):
+            BUS.emit("state", state="idle", level=0.0)

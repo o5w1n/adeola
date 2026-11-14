@@ -36,6 +36,19 @@ class Note:
     path: Path
     folder: str
     body: str
+    mtime: float = 0.0
+
+
+_RECENCY_RE = re.compile(
+    r"\b(?:last|latest|newest|recent|recently)\b.*\b(?:note|notes|vault|brain|added|created|updated|saved)\b"
+    r"|\b(?:note|notes|vault)\b.*\b(?:last|latest|newest|recent|recently)\b"
+    r"|^(?:last|latest|newest|recent)(?:\s+notes?)?$",
+    re.IGNORECASE,
+)
+
+
+def is_recency_query(query: str) -> bool:
+    return bool(_RECENCY_RE.search(query.strip()))
 
 
 class NotesIndex:
@@ -71,7 +84,8 @@ class NotesIndex:
                 if any(part in exclude for part in rel.parts):
                     continue
                 try:
-                    if fpath.stat().st_size > max_bytes:
+                    st = fpath.stat()
+                    if st.st_size > max_bytes:
                         continue
                     raw = fpath.read_text(encoding="utf-8", errors="ignore")
                 except OSError:
@@ -80,7 +94,7 @@ class NotesIndex:
                 body = _clean_markdown(raw)
                 rel_parent = rel.parent
                 folder = default_folder if str(rel_parent) == "." else rel_parent.as_posix()
-                note = Note(title=fpath.stem, path=fpath, folder=folder, body=body)
+                note = Note(title=fpath.stem, path=fpath, folder=folder, body=body, mtime=st.st_mtime)
                 self.notes.append(note)
                 self._words.append((words(note.title), words(note.body)))
 
@@ -138,8 +152,14 @@ class NotesIndex:
         if self._explicit_captures or not config.DRY_RUN:
             cap_root.mkdir(parents=True, exist_ok=True)
             fpath.write_text(raw_md, encoding="utf-8")
+            try:
+                mtime = fpath.stat().st_mtime
+            except OSError:
+                mtime = time.time()
+        else:
+            mtime = time.time()
 
-        note = Note(title=title, path=fpath, folder="captures", body=body)
+        note = Note(title=title, path=fpath, folder="captures", body=body, mtime=mtime)
         w_pair = (words(note.title), words(note.body))
         for i, existing in enumerate(self.notes):
             if existing.path == fpath:
@@ -169,6 +189,15 @@ class NotesIndex:
                 scored.append((-score, len(str(note.path)), note.title.lower(), note))
         scored.sort(key=lambda item: (item[0], item[1], item[2]))
         return [item[3] for item in scored[:limit]]
+
+    def recent(self, limit: int = config.NOTES_IN_PROMPT) -> list[Note]:
+        """Return the `limit` most recently modified curated notes (newest first, generated Graph/ last)."""
+        ordered = sorted(
+            self.notes,
+            key=lambda n: (not n.folder.startswith("Graph"), n.mtime, n.title.lower()),
+            reverse=True,
+        )
+        return ordered[:limit]
 
     def excerpt(
         self,
