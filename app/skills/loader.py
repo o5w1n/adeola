@@ -43,12 +43,11 @@ def default_skill_dirs() -> list[Path]:
     return dirs
 
 
-def default_vault_outputs_dir() -> Path:
+def default_outputs_dir() -> Path:
+    """data/outputs by default, so the vault stays read-only; set ADEOLA_VAULT_OUT to opt in."""
     env_out = os.getenv("ADEOLA_VAULT_OUT", "").strip()
     if env_out:
         return Path(env_out).expanduser()
-    if config.NOTES_DIRS:
-        return Path(config.NOTES_DIRS[0]).expanduser() / "Adeola" / "outputs"
     return config.DATA_DIR / "outputs"
 
 
@@ -101,11 +100,11 @@ def discover_skills(dirs: list[Path] | None = None) -> list[Skill]:
 
 
 def save_vault_output(title: str, content: str, out_dir: Path | None = None) -> Path:
-    """Save a markdown skill/agent output to the vault (falling back to data/outputs)."""
+    """Save a markdown skill/agent output (see default_outputs_dir), falling back to data/outputs."""
     slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "output"
     stamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     filename = f"{stamp}_{slug}.md"
-    target_dir = out_dir or default_vault_outputs_dir()
+    target_dir = out_dir or default_outputs_dir()
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
         path = target_dir / filename
