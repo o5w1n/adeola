@@ -70,6 +70,11 @@ CASES = [
 ]
 
 
+def is_failure(source: str) -> bool:
+    """The router answered with an error fallback (model unreachable, timeout, crash)."""
+    return source in ("none", "error") or source.startswith("error:")
+
+
 def check(calls, tools, needle) -> bool:
     if not tools:
         return not calls
@@ -114,7 +119,7 @@ def main() -> None:
             calls, source = [], "error"
             print(f"   ! {text!r} raised {e.__class__.__name__}: {e}")
         ms = (time.perf_counter() - start) * 1000
-        ok = check(calls, tools, needle)
+        ok = not is_failure(source) and check(calls, tools, needle)
         passed += ok
         timings.append((source, ms))
         print(f"{'✓' if ok else '✗':2} {source:6} {ms:6.0f}  {text!r} -> {calls}")
