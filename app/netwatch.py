@@ -8,6 +8,7 @@ NEEDS_INTERNET: dict[str, str] = {
     "web_search": "opens Google in your browser",
     "open_url": "opens websites in your browser",
     "first run": "downloads Whisper, Kokoro and wake-word models once",
+    "cloud brain": "only when you switch to a cloud brain (Gemini, Groq, OpenRouter or Claude)",
 }
 
 

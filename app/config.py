@@ -54,6 +54,9 @@ CLOUD_BRAINS = {
         "base_url": "https://api.anthropic.com/v1",
     },
 }
+# Cloud privacy: when using a RemoteBrain, send only the current prompt unless opted in.
+CLOUD_SHARES_NOTES = os.getenv("ADEOLA_CLOUD_SHARES_NOTES") == "1"
+CLOUD_SHARES_MEMORY = os.getenv("ADEOLA_CLOUD_SHARES_MEMORY") == "1"
 AUTO_BRAIN = True
 AUTO_SWITCH_COOLDOWN_SECONDS = 60.0
 KEEP_ALIVE = "30m"      # keep the model loaded so replies stay fast

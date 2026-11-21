@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from app import config
 from app.brain.harness import AgentHarness
 from app.brain.policy import BrainPolicy
-from app.brain.remote import RemoteBrain
+from app.brain.remote import RemoteBrain, cloud_blocked_tools
 from app.brain.traces import TraceAnalyzer
 from app.events import BUS
 from app.memory.notes import NotesIndex, is_recency_query
@@ -267,9 +267,9 @@ class Router:
         if _HELP.match(text):
             return HELP_TEXT
         if _HONESTY_LOCAL.match(text):
-            return LOCAL_HONESTY_TEXT
+            return self._honesty_local()
         if _HONESTY_INTERNET.match(text):
-            return INTERNET_HONESTY_TEXT
+            return self._honesty_internet()
         if _GREETING.match(text):
             reply = GREETING_REPLIES[self._greeting_idx % len(GREETING_REPLIES)]
             self._greeting_idx += 1
@@ -447,6 +447,57 @@ class Router:
         _, msg = self.speaker.switch_voice(target)
         return msg
 
+    def _is_cloud_brain(self) -> bool:
+        return isinstance(self.brain, RemoteBrain)
+
+    def _honesty_local(self) -> str:
+        if not self._is_cloud_brain():
+            return LOCAL_HONESTY_TEXT
+        provider = self.brain.brain_name()
+        model = getattr(self.brain, "model", "")
+        if config.CLOUD_SHARES_MEMORY and config.CLOUD_SHARES_NOTES:
+            sharing = "Cloud sharing is enabled for both your saved memory and notes."
+        elif config.CLOUD_SHARES_MEMORY:
+            sharing = "Cloud sharing is enabled for your saved memory; your notes stay on this PC."
+        elif config.CLOUD_SHARES_NOTES:
+            sharing = "Cloud sharing is enabled for your notes; your saved memory stays on this PC."
+        else:
+            sharing = "Only your current question goes to the cloud — your saved memory and notes stay on this PC."
+        return (
+            f"Right now I'm using the {provider} cloud brain ({model}), so model requests leave this PC "
+            f"and may incur API costs. Voice, apps and local tools still run on your machine. "
+            f"{sharing} Say 'go local' anytime to switch back to Ollama."
+        )
+
+    def _honesty_internet(self) -> str:
+        if not self._is_cloud_brain():
+            return INTERNET_HONESTY_TEXT
+        provider = self.brain.brain_name()
+        model = getattr(self.brain, "model", "")
+        return (
+            f"Right now the {provider} cloud brain ({model}) uses the internet, along with web search, "
+            "opening websites, and first-run model downloads. Voice, apps, media, projects, memory and "
+            "notes stay on this PC. Say 'go local' to run offline with Ollama."
+        )
+
+    def _brain_error_reply(self, exc: Exception) -> str:
+        if self._is_cloud_brain():
+            return (
+                f"I couldn't reach the {self.brain.brain_name()} cloud brain ({exc.__class__.__name__}). "
+                "Check your internet or API key, or say 'go local'."
+            )
+        return f"I couldn't reach the local model ({exc.__class__.__name__}). Is Ollama running?"
+
+    def _prompt_facts(self, text: str) -> list[str]:
+        if self._is_cloud_brain() and not config.CLOUD_SHARES_MEMORY:
+            return []
+        return self.facts_for(text)
+
+    def _prompt_notes(self, text: str, min_score: int = config.NOTES_MIN_SCORE) -> list[tuple[str, str]]:
+        if self._is_cloud_brain() and not config.CLOUD_SHARES_NOTES:
+            return []
+        return self.notes_for(text, min_score=min_score)
+
     def facts_for(self, text: str) -> list[str]:
         mem = self.toolbox.memory
         if mem is None or config.MEMORY_IN_PROMPT <= 0:
@@ -516,23 +567,37 @@ class Router:
                     titles = ", ".join(t for t, _ in matched)
                     res = Result(f"Your most recent note is {matched[0][0]} (recent: {titles}).",
                                  source="notes", sources=[t for t, _ in matched])
+                elif self._is_cloud_brain() and not config.CLOUD_SHARES_NOTES:
+                    titles = ", ".join(t for t, _ in matched)
+                    res = Result(
+                        f"Your most recent note is {matched[0][0]} (recent: {titles}). "
+                        "Cloud note sharing is off, so I answered locally — say 'go local' to summarize them.",
+                        source="notes",
+                        sources=[t for t, _ in matched],
+                        brain="local",
+                    )
                 else:
                     try:
                         calls, reply = self.brain.decide(
-                            clean(raw, keep_case=True), self.facts_for(text), notes=matched
+                            clean(raw, keep_case=True), self._prompt_facts(text), notes=matched
                         )
                     except Exception as e:
-                        res = Result(f"I couldn't reach the local model ({e.__class__.__name__}). "
-                                     "Is Ollama running?", source="none")
+                        res = Result(self._brain_error_reply(e), source="none")
                     else:
+                        blocked = cloud_blocked_tools() if self._is_cloud_brain() else set()
+                        hit_private = any(n in blocked for n, _ in calls)
                         if not reply and calls and hasattr(self.brain, "synthesize"):
                             obs = [(n, a, self.toolbox.run(n, a)) for n, a in calls]
-                            try:
-                                reply = self.brain.synthesize(clean(raw, keep_case=True), obs).strip()
-                            except Exception:
-                                reply = ""
+                            if hit_private:
+                                reply = " ".join(filter(None, (out for _, _, out in obs)))
+                            else:
+                                try:
+                                    reply = self.brain.synthesize(clean(raw, keep_case=True), obs).strip()
+                                except Exception:
+                                    reply = ""
                         reply_text = reply or f"The most recent note in your vault is {matched[0][0]}."
-                        self.brain.remember(text, reply_text)
+                        if not hit_private:
+                            self.brain.remember(text, reply_text)
                         res = Result(reply_text, calls, source="notes",
                                      sources=[t for t, _ in matched])
             elif m := _NOTES_Q.match(text):
@@ -544,14 +609,22 @@ class Router:
                     titles = ", ".join(t for t, _ in matched)
                     res = Result(f"Your notes on that: {titles}.", source="notes",
                                  sources=[t for t, _ in matched])
+                elif self._is_cloud_brain() and not config.CLOUD_SHARES_NOTES:
+                    titles = ", ".join(t for t, _ in matched)
+                    res = Result(
+                        f"Your notes on that: {titles}. Cloud note sharing is off, so I didn't "
+                        "send them to the cloud — say 'go local' to summarize them.",
+                        source="notes",
+                        sources=[t for t, _ in matched],
+                        brain="local",
+                    )
                 else:
                     try:
                         calls, reply = self.brain.decide(
-                            clean(raw, keep_case=True), self.facts_for(text), notes=matched
+                            clean(raw, keep_case=True), self._prompt_facts(text), notes=matched
                         )
                     except Exception as e:
-                        res = Result(f"I couldn't reach the local model ({e.__class__.__name__}). "
-                                     "Is Ollama running?", source="none")
+                        res = Result(self._brain_error_reply(e), source="none")
                     else:
                         reply_text = reply or "Sorry, I'm not sure how to help with that."
                         self.brain.remember(text, reply_text)
@@ -559,23 +632,25 @@ class Router:
                                      sources=[t for t, _ in matched])
             elif (m := _TIER3_AGENT.match(text)) and self.brain is not None:
                 goal = m.group(1).strip()
-                matched = self.notes_for(goal)
+                matched = self._prompt_notes(goal)
                 note_sources = [t for t, _ in matched]
                 try:
                     h_res = self.harness.run(
                         self.brain,
                         goal,
-                        facts=self.facts_for(goal),
+                        facts=self._prompt_facts(goal),
                         notes=matched,
                     )
                 except Exception as e:
                     res = Result(
-                        f"I couldn't reach the model ({e.__class__.__name__}).",
+                        self._brain_error_reply(e),
                         source="none",
                         confidence=0.0,
                     )
                 else:
-                    self.brain.remember(text, h_res.reply)
+                    blocked = cloud_blocked_tools() if self._is_cloud_brain() else set()
+                    if not any(n in blocked for n, _, _ in h_res.observations):
+                        self.brain.remember(text, h_res.reply)
                     res = Result(
                         h_res.reply,
                         h_res.calls,
@@ -602,16 +677,16 @@ class Router:
         elif self.brain is None:
             res = Result("I didn't catch that, and the model is offline.", source="none")
         else:
-            matched = self.notes_for(text)
+            matched = self._prompt_notes(text)
             self._maybe_auto_switch(text, has_notes=bool(matched))
             try:
                 calls, reply = self.brain.decide(
-                    clean(raw, keep_case=True), self.facts_for(text), notes=matched
+                    clean(raw, keep_case=True), self._prompt_facts(text), notes=matched
                 )
             except Exception as e:  # Ollama not running, model missing, etc.
-                res = Result(f"I couldn't reach the local model ({e.__class__.__name__}). "
-                             "Is Ollama running?", source="none")
+                res = Result(self._brain_error_reply(e), source="none")
             else:
+                remember_turn = True
                 note_sources = [t for t, _ in matched] if reply else []
                 if calls and all(n == "offer_to_remember" for n, _ in calls):
                     # answer the question, then ask about keeping the fact
@@ -637,34 +712,47 @@ class Router:
                             (name, args, self.toolbox.run(name, args)) for name, args in real
                         ]
                         fallback_text = " ".join(filter(None, (out for _, _, out in observations)))
-                        try:
-                            synth = self.brain.synthesize(
-                                clean(raw, keep_case=True), observations
-                            ).strip()
-                        except Exception:
-                            synth = ""
-                        if synth:
-                            res = Result(
-                                synth, real, source="agent", sources=note_sources,
-                                steps=2, observations=observations,
-                            )
-                        else:
+                        blocked = cloud_blocked_tools() if self._is_cloud_brain() else set()
+                        if any(name in blocked for name, _ in real):
+                            remember_turn = False
                             res = Result(
                                 fallback_text, real, source="llm",
                                 steps=1, observations=observations,
                             )
+                        else:
+                            try:
+                                synth = self.brain.synthesize(
+                                    clean(raw, keep_case=True), observations
+                                ).strip()
+                            except Exception:
+                                synth = ""
+                            if synth:
+                                res = Result(
+                                    synth, real, source="agent", sources=note_sources,
+                                    steps=2, observations=observations,
+                                )
+                            else:
+                                res = Result(
+                                    fallback_text, real, source="llm",
+                                    steps=1, observations=observations,
+                                )
                     else:
                         res = Result(self.run_calls(real), real, "llm")
+                        blocked = cloud_blocked_tools() if self._is_cloud_brain() else set()
+                        if any(name in blocked for name, _ in real):
+                            remember_turn = False
                 else:
                     res = Result(reply or "Sorry, I'm not sure how to help with that.",
                                  source="chat", sources=note_sources)
-                self.brain.remember(text, res.reply)
+                if remember_turn:
+                    self.brain.remember(text, res.reply)
 
         res.ms = (time.perf_counter() - start) * 1000
         if res.source == "none":
             res.confidence = 0.0
         elif res.source != "fast" and self.brain is not None:
-            res.brain = getattr(self.brain, "model", config.MODEL)
+            if res.brain == "fast":
+                res.brain = getattr(self.brain, "model", config.MODEL)
             if getattr(self.brain, "last_stats", {}).get("parse_error"):
                 res.confidence = min(res.confidence, 0.4)
             elif res.source != "agent":
@@ -680,6 +768,7 @@ class Router:
             source=res.source,
             ms=round(res.ms, 1),
             brain=res.brain,
+            is_cloud=self._is_cloud_brain(),
             calls=[{"tool": n, "args": a} for n, a in res.calls],
             sources=res.sources,
             steps=res.steps,

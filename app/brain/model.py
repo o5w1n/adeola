@@ -68,6 +68,10 @@ def _decision_schema(schemas: list[dict]) -> dict:
     }
 
 
+def format_observations(observations: list[tuple[str, dict, str]]) -> str:
+    return "\n".join(f"- {name}({args}): {out}" for name, args, out in observations)
+
+
 class Brain:
     def __init__(self, tool_schemas: list[dict], model: str = config.MODEL,
                  client=None, mode: str = config.DECISION_MODE):
@@ -187,7 +191,8 @@ class Brain:
         return raw
 
     def decide(self, text: str, facts: list[str] | None = None,
-               notes: list[tuple[str, str]] | None = None) -> tuple[list[tuple[str, dict]], str]:
+               notes: list[tuple[str, str]] | None = None,
+               observations: list[tuple[str, dict, str]] | None = None) -> tuple[list[tuple[str, dict]], str]:
         """Return (tool calls, plain-text reply). One of them is usually empty.
         `facts` are relevant things the user asked to be remembered."""
         memory = ([{"role": "system", "content": "Things the user told you before (use only if "
@@ -196,10 +201,14 @@ class Brain:
                        "them when relevant and name the note; if they don't cover the question, "
                        "say so plainly:\n" + "\n\n".join(f"### {t}\n{x}" for t, x in notes)}]
                      if notes else [])
+        obs_msg = ([{"role": "system", "content": "Tool observations from earlier steps in this turn "
+                     "(use these directly; do not treat them as saved notes):\n" + format_observations(observations)}]
+                   if observations else [])
         messages = [{"role": "system", "content": self.system_prompt},
                     *self.history[-2 * config.HISTORY_TURNS:],
                     *memory,
                     *notes_msg,
+                    *obs_msg,
                     {"role": "user", "content": text}]
         resp = self._chat(messages)
         raw = self._unpack(resp, retried=False)
@@ -237,7 +246,7 @@ class Brain:
 
     def synthesize(self, text: str, observations: list[tuple[str, dict, str]]) -> str:
         """Step 2 of the bounded agent loop: answer the user using tool observations."""
-        obs_lines = "\n".join(f"- {name}({args}): {out}" for name, args, out in observations)
+        obs_lines = format_observations(observations)
         user_prompt = (
             f"User request: {text}\n\n"
             f"Tool observations:\n{obs_lines}\n\n"

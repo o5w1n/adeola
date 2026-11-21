@@ -140,6 +140,14 @@
       background: var(--emerald);
       box-shadow: 0 0 10px var(--emerald);
     }
+    .axis-node.cloud .axis-title {
+      color: var(--amber);
+      text-shadow: 0 0 12px rgba(251, 191, 36, 0.45);
+    }
+    .axis-node.cloud .axis-dot {
+      background: var(--amber);
+      box-shadow: 0 0 10px var(--amber);
+    }
 
     /* ── Subtle Corner Toggle in Orb Mode (P14) ────────────────── */
     #corner-toggle {
@@ -176,6 +184,42 @@
       border-radius: 50%;
       background: var(--emerald);
       box-shadow: 0 0 8px var(--emerald);
+    }
+    body.cloud-active .live-dot {
+      background: var(--amber);
+      box-shadow: 0 0 8px var(--amber);
+    }
+    #cloud-pill {
+      position: fixed;
+      top: 18px;
+      left: 22px;
+      z-index: 40;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      background: rgba(24, 18, 8, 0.78);
+      border: 1px solid rgba(251, 191, 36, 0.42);
+      color: var(--amber);
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      backdrop-filter: blur(10px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+    }
+    body.cloud-active:not(.dashboard-open) #cloud-pill {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .cloud-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--amber);
+      box-shadow: 0 0 8px var(--amber);
     }
     .kbd-hint {
       font-size: 10px;
@@ -271,6 +315,22 @@
       padding-left: 10px;
       border-left: 1px solid var(--border-subtle);
     }
+    #cloud-badge {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      padding: 3px 9px;
+      border-radius: 999px;
+      border: 1px solid rgba(52, 211, 153, 0.35);
+      background: rgba(52, 211, 153, 0.12);
+      color: var(--emerald);
+    }
+    #cloud-badge.is-cloud {
+      border-color: rgba(251, 191, 36, 0.48);
+      background: rgba(251, 191, 36, 0.15);
+      color: var(--amber);
+      box-shadow: 0 0 12px rgba(251, 191, 36, 0.18);
+    }
     .topbar-right {
       display: flex;
       align-items: center;
@@ -302,6 +362,11 @@
       background: rgba(56, 189, 248, 0.18);
       color: var(--cyan);
       box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.38);
+    }
+    .pill-btn.cloud-pill-btn.active {
+      background: rgba(251, 191, 36, 0.18);
+      color: var(--amber);
+      box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.42);
     }
 
     /* ── Side Columns (Overview Tab) ───────────────────────────── */
@@ -719,6 +784,12 @@
     <span class="kbd-hint">Tab</span>
   </button>
 
+  <!-- Cloud Brain Indicator (visible in Orb Mode only when a cloud brain is active) -->
+  <div id="cloud-pill" title="Cloud brain active — model prompts leave this PC">
+    <span class="cloud-dot"></span>
+    <span id="cloud-pill-label">CLOUD</span>
+  </div>
+
   <!-- Floating Type-to-Talk Bar (Orb Mode: appears when you press any letter key) -->
   <form id="floating-composer" onsubmit="submitFloating(event)">
     <input id="floating-input" type="text" placeholder="Say Adeola or type a command..." autocomplete="off" />
@@ -731,6 +802,7 @@
       <div class="brand-glyph"></div>
       <span class="brand-name">ADEOLA</span>
       <span class="brand-sub">Operational Intelligence &amp; Voice Telemetry</span>
+      <span id="cloud-badge">LOCAL</span>
     </div>
     <div class="topbar-right">
       <div class="pill-group" title="Presence visual mode (shortcut: A)">
@@ -742,8 +814,8 @@
         <button class="pill-btn" id="brain-quick" onclick="switchBrain('quick')">Quick</button>
         <button class="pill-btn" id="brain-smart" onclick="switchBrain('smart')">Smart</button>
         <button class="pill-btn" id="brain-coder" onclick="switchBrain('coder')">Coder</button>
-        <button class="pill-btn" id="brain-gemini" onclick="switchBrain('gemini')">Gemini</button>
-        <button class="pill-btn" id="brain-groq" onclick="switchBrain('groq')">Groq</button>
+        <button class="pill-btn cloud-pill-btn" id="brain-gemini" onclick="switchBrain('gemini')">Gemini</button>
+        <button class="pill-btn cloud-pill-btn" id="brain-groq" onclick="switchBrain('groq')">Groq</button>
       </div>
       <div class="pill-group" title="Preview orb state or follow live pipeline">
         <button class="pill-btn active" id="sim-live" onclick="setSimState(null)">Live</button>
@@ -1543,22 +1615,47 @@
       } catch (_) {}
     }
 
+    function applyCloudState(isCloud, brainName) {
+      const label = (brainName || "cloud").toUpperCase();
+      document.body.classList.toggle("cloud-active", isCloud);
+      const pillLabel = document.getElementById("cloud-pill-label");
+      if (pillLabel) pillLabel.textContent = isCloud ? ("CLOUD · " + label) : "CLOUD";
+      const badge = document.getElementById("cloud-badge");
+      if (badge) {
+        badge.textContent = isCloud ? ("CLOUD · " + label) : "LOCAL";
+        badge.classList.toggle("is-cloud", isCloud);
+      }
+      const thinkNode = document.getElementById("axis-think");
+      if (thinkNode) thinkNode.classList.toggle("cloud", isCloud);
+      const syncMeta = document.getElementById("sync-meta");
+      if (syncMeta) {
+        syncMeta.textContent = isCloud
+          ? ("Local SSE Stream · Cloud Brain (" + (brainName || "cloud") + ")")
+          : "Local SSE Stream · 100% Offline";
+      }
+    }
+
     function renderTelemetry(d) {
       const st = d.status || {};
       const m = d.metrics || {};
       const live = d.live || {};
 
-      // Active brain pill highlight
+      // Active brain pill highlight & cloud state
       const activeBrain = (st.brain || "smart").toLowerCase();
-      for (const b of ["auto", "quick", "smart", "coder"]) {
+      const isCloud = Boolean(st.is_cloud);
+      applyCloudState(isCloud, activeBrain);
+      for (const b of ["auto", "quick", "smart", "coder", "gemini", "groq"]) {
         const btn = document.getElementById("brain-" + b);
         if (!btn) continue;
-        if (b === "auto") btn.classList.toggle("active", !st.pinned);
-        else btn.classList.toggle("active", st.pinned && activeBrain === b);
+        if (b === "auto") btn.classList.toggle("active", !st.pinned && !isCloud);
+        else btn.classList.toggle("active", (st.pinned || isCloud) && activeBrain === b);
       }
 
-      document.getElementById("routing-mode-badge").textContent =
-        st.pinned ? ("Pinned · " + activeBrain) : ("Auto · " + activeBrain);
+      const modeBadge = document.getElementById("routing-mode-badge");
+      modeBadge.textContent = isCloud
+        ? ("Cloud · " + activeBrain)
+        : (st.pinned ? ("Pinned · " + activeBrain) : ("Auto · " + activeBrain));
+      modeBadge.style.color = isCloud ? "var(--amber)" : "var(--emerald)";
       document.getElementById("fast-rate-val").textContent = (m.fast_hit_rate ?? 100) + "%";
       document.getElementById("avg-ms-sub").textContent = "avg " + Math.round(m.avg_ms || 0) + " ms per turn";
       document.getElementById("total-turns-val").textContent = String(m.total_turns || 0);
@@ -1660,6 +1757,13 @@
             const stEl = document.getElementById("live-state-val");
             if (stEl) stEl.textContent = d.state.charAt(0).toUpperCase() + d.state.slice(1);
           }
+          if (typeof d.is_cloud === "boolean") {
+            document.body.classList.toggle("cloud-active", d.is_cloud);
+          }
+          if (d.type === "harness" && d.step) {
+            const stEl = document.getElementById("live-state-val");
+            if (stEl) stEl.textContent = "Agent " + d.step + "/" + (d.max_steps || "?");
+          }
           if (typeof d.level === "number") targetLevel = d.level;
           if (typeof d.wake_score === "number") {
             const wEl = document.getElementById("sig-wake");
@@ -1756,7 +1860,7 @@
         });
         const data = await res.json();
         if (box) box.textContent = data.reply || data.error || "Done.";
-        refreshTelemetry();
+        loadTelemetry();
       } catch {}
     }
 

@@ -14,7 +14,20 @@ import urllib.error
 import urllib.request
 
 from app import config
-from app.brain.model import BASE_PROMPT, _tool_lines
+from app.brain.model import BASE_PROMPT, _tool_lines, format_observations
+
+NOTE_TOOLS = {"search_notes"}
+MEMORY_TOOLS = {"recall", "recent_activity", "forget"}   # forget's reply echoes the stored fact
+
+
+def cloud_blocked_tools() -> set[str]:
+    """Tools whose outputs stay local unless the user opts into cloud sharing."""
+    blocked: set[str] = set()
+    if not config.CLOUD_SHARES_NOTES:
+        blocked |= NOTE_TOOLS
+    if not config.CLOUD_SHARES_MEMORY:
+        blocked |= MEMORY_TOOLS
+    return blocked
 
 
 def _post_json(url: str, headers: dict[str, str], payload: dict, timeout: float = 30.0) -> dict:
@@ -70,6 +83,9 @@ class RemoteBrain:
         base = BASE_PROMPT.replace(
             "You run 100% on this PC (Ollama, Whisper, Kokoro). You cost nothing to run and never send conversation data to the cloud.",
             f"You are currently running on the {self.name} cloud brain ({self.model}) for stronger reasoning, while voice and local tools stay on this PC.",
+        ).replace(
+            "Only opening websites and web search use the internet.",
+            f"Your active {self.name} cloud brain, opening websites, and web search use the internet.",
         )
         return (
             f"{base}\n\nTools:\n{_tool_lines(self.tools)}\n\n"
@@ -203,20 +219,31 @@ class RemoteBrain:
         text: str,
         facts: list[str] | None = None,
         notes: list[tuple[str, str]] | None = None,
+        observations: list[tuple[str, dict, str]] | None = None,
     ) -> tuple[list[tuple[str, dict]], str]:
+        shared_facts = facts if (facts and config.CLOUD_SHARES_MEMORY) else None
+        shared_notes = notes if (notes and config.CLOUD_SHARES_NOTES) else None
+        blocked = cloud_blocked_tools()
+        shared_obs = [o for o in observations if o[0] not in blocked] if observations else None
+
         memory = (
-            [{"role": "system", "content": "Things the user told you before (use only if relevant):\n" + "\n".join(f"- {f}" for f in facts)}]
-            if facts else []
+            [{"role": "system", "content": "Things the user told you before (use only if relevant):\n" + "\n".join(f"- {f}" for f in shared_facts)}]
+            if shared_facts else []
         )
         notes_msg = (
-            [{"role": "system", "content": "Excerpts from the user's notes. Answer from them when relevant and name the note; if they don't cover the question, say so plainly:\n" + "\n\n".join(f"### {t}\n{x}" for t, x in notes)}]
-            if notes else []
+            [{"role": "system", "content": "Excerpts from the user's notes. Answer from them when relevant and name the note; if they don't cover the question, say so plainly:\n" + "\n\n".join(f"### {t}\n{x}" for t, x in shared_notes)}]
+            if shared_notes else []
+        )
+        obs_msg = (
+            [{"role": "system", "content": "Tool observations from earlier steps in this turn (use these directly; do not treat them as saved notes):\n" + format_observations(shared_obs)}]
+            if shared_obs else []
         )
         messages = [
             {"role": "system", "content": self.system_prompt},
             *self.history[-2 * config.HISTORY_TURNS:],
             *memory,
             *notes_msg,
+            *obs_msg,
             {"role": "user", "content": text},
         ]
         raw, finish, in_tok, out_tok, elapsed_ms = self._call(messages, config.RETRY_OUTPUT_TOKENS)
@@ -230,7 +257,10 @@ class RemoteBrain:
         return self._parse_json(raw)
 
     def synthesize(self, text: str, observations: list[tuple[str, dict, str]]) -> str:
-        obs_lines = "\n".join(f"- {name}({args}): {out}" for name, args, out in observations)
+        blocked = cloud_blocked_tools()
+        if any(name in blocked for name, _, _ in observations):
+            return ""
+        obs_lines = format_observations(observations)
         user_prompt = (
             f"User request: {text}\n\n"
             f"Tool observations:\n{obs_lines}\n\n"
