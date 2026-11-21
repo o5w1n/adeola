@@ -9,7 +9,7 @@
 ## Phase 1: Eval Harness (Baseline & Scoreboard)
 - [x] **1.1** Extend [`tests/eval_commands.py`](file:///c:/Users/O%20M%20E%20N/Downloads/adeola/tests/eval_commands.py) via [`tests/eval_harness.py`](file:///c:/Users/O%20M%20E%20N/Downloads/adeola/tests/eval_harness.py) to score across 3 tiers (T1 fast path, T2 single-turn tool/chat, T3 multi-step/observation+synthesis).
 - [x] **1.2** Record per-run metrics: pass/fail, route source, latency (p50/p95 ms), schema/JSON compliance, and provider/model tag; save JSON report (`data/evals/<brain>.json`).
-- [ ] **1.3** Run live baseline eval on local `qwen3:4b` (when Ollama is running) and `gemini` (once `GEMINI_API_KEY` is set).
+- [~] **1.3** Run live baseline eval on local `qwen3:4b` (when Ollama is running) and `gemini` (once `GEMINI_API_KEY` is set). Local done (`data/evals/smart-pre2.json`, `smart-post2.json`); cloud still open, see 5.6.
 
 ## Phase 2: Provider-Agnostic Remote Brain (`Gemini` first)
 - [x] **2.1** Add `CLOUD_BRAINS` presets in [`app/config.py`](file:///c:/Users/O%20M%20E%20N/Downloads/adeola/app/config.py) (`gemini` using `GEMINI_API_KEY` + OpenAI-compatible endpoint, plus `groq` / `openrouter` / `claude` slots).
@@ -26,8 +26,28 @@
 
 ## Phase 4: JARVIS OS Stages (Skills + Vault Outputs + HUD)
 - [x] **4.1** Add `SKILL.md` loader & trace-based "done twice → suggest skill" helper ([`app/skills/loader.py`](file:///c:/Users/O%20M%20E%20N/Downloads/adeola/app/skills/loader.py)) plus starter skills (`morning-brief`, `project-status`).
-- [x] **4.2** Write skill/agent outputs to `qabw/Adeola/outputs/` (with `data/outputs/` fallback) via `save_vault_output`.
+- [x] **4.2** Write skill/agent outputs via `save_vault_output`. Default is `data/outputs/` (the vault stays read-only); set `ADEOLA_VAULT_OUT` to opt into writing to the vault.
 - [x] **4.3** Add `GET /api/skills` + `POST /api/skills/run` in [`app/server.py`](file:///c:/Users/O%20M%20E%20N/Downloads/adeola/app/server.py) and `Groq` pill + `SKILLS & ACTIONS` buttons in [`app/ui/hud.html`](file:///c:/Users/O%20M%20E%20N/Downloads/adeola/app/ui/hud.html).
+
+## Phase 5: Review follow-ups (Claude + Gemini review, 2026-11-21)
+
+Done: server LAN/token hardening (`c4746cb`), skill outputs off the vault (`9eb2203`), cloud privacy gating + truthful cloud status (`06a27ca`), eval failure gating + real Tier 3 cases (`599ee45`).
+
+Open, roughly in priority order:
+- [ ] **5.1** Router split, no behaviour change: brain/voice switching into `app/brain/switching.py`; one shared `_model_turn()` for the three near-duplicate decide → synthesize → remember paths in `handle()`. `tests/test_router.py` is the safety net.
+- [ ] **5.2** Tier 3 stops after the first tool (post-#2 eval: 3/6). On step 2 the model replies instead of calling the second tool ("time and my exam" → only `get_time`). Try a step-1 plan of the sub-questions, or restate the unanswered parts on step 2+. Measure before/after in the same sitting.
+- [ ] **5.3** T2 misses in the local eval: "capital of Ghana" → `web_search` instead of a chat answer; "when is my exam again?" and "which apps did you open today?" get a chat reply instead of `recall` / `recent_activity`; the dentist case gets no `offer_to_remember`. Prompt or fast-path work; do it after 5.1 so it doesn't collide with the split.
+- [ ] **5.4** Silent failures: `_maybe_auto_switch` and `_record_trace` in `router.py` swallow every exception. Emit a BUS event (and log under `-v`) so the HUD can show failed auto-switches.
+- [ ] **5.5** `AUTO_BRAIN = True` on a 6 GB GPU: time the smart ↔ coder swap in `tools/preflight.py` before keeping it on by default.
+- [ ] **5.6** Cloud evals: check the live model IDs in `app/config.py` (`gemini-3.8-flash`, `qwen/qwen3.8-27b`). The old `gemini.json` run made zero successful API calls (30 s timeouts). Re-run `gemini` / `groq` with `--delay`, in the same sitting as a local run.
+- [ ] **5.7** Skills: the router doesn't match skill `triggers` from voice/text, the HUD ignores `data.suggested`, and `/api/skills` + `/api/skills/run` have little test coverage.
+- [ ] **5.8** HUD ignores `confidence` on `turn` events.
+- [ ] **5.9** Cloud privacy, low: `list_projects` output (project names) still goes to the cloud brain. Decide whether it belongs in the blocked set.
+- [ ] **5.10** Tailscale access path (`client_access` = `tailscale`) is unit-tested only. Verify from the phone over Tailscale with the printed `?token=` link.
+- [ ] **5.11** README refresh: the intro still says "a local text assistant", and the "How it works" table is missing remote brain, harness, skills, events, HUD, cloud sharing flags and the server access rules (`ADEOLA_ALLOW_LAN`, `data/server_token`).
+- [ ] **5.12** Low: `app/ui/hud.html` is about 1,900 lines in one file. Split JS/CSS into static files served by `server.py` if it keeps growing.
+
+Eval rule: before/after comparisons are only valid from the same sitting. GPU/Ollama state drifted about 120 ms and flipped one T1 case between two runs of identical code.
 
 ---
 
