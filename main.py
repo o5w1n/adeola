@@ -121,7 +121,9 @@ def start_server(
     print(f"{N}: Visual HUD at  http://127.0.0.1:{port}/hud")
     ts_ip = tailscale_ip()
     if ts_ip:
-        print(f"{N}: Tailscale (Android): http://{ts_ip}:{port}")
+        query = f"?token={srv.token}" if srv.token else ""
+        print(f"{N}: Tailscale (Android): http://{ts_ip}:{port}/{query}")
+        print("   (Open that link once on your phone; it remembers the token. Keep it private.)")
     return srv
 
 

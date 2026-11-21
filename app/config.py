@@ -203,4 +203,6 @@ NOTES_MIN_SCORE = 3           # below this a note isn't attached to a general qu
 SERVER_HOST = os.getenv("ADEOLA_HOST", "0.0.0.0")
 SERVER_PORT = int(os.getenv("ADEOLA_PORT", "8765"))
 SERVER_TOKEN = os.getenv("ADEOLA_TOKEN", "")
+# Peers other than this PC and Tailscale devices (100.64.0.0/10) are refused unless this is set.
+SERVER_ALLOW_LAN = os.getenv("ADEOLA_ALLOW_LAN") == "1"
 

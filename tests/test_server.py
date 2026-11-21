@@ -21,7 +21,13 @@ from app.audio.tts import Speaker  # noqa: E402
 from app.brain.router import Router  # noqa: E402
 from app.memory.notes import NotesIndex  # noqa: E402
 from app.memory.store import Memory  # noqa: E402
-from app.server import AdeolaServer, decode_wav_16k, tailscale_ip  # noqa: E402
+from app.server import (  # noqa: E402
+    AdeolaServer,
+    client_access,
+    decode_wav_16k,
+    load_or_create_token,
+    tailscale_ip,
+)
 from app.tools.applications import App, AppIndex  # noqa: E402
 from app.tools.projects import Projects  # noqa: E402
 from app.tools.registry import Toolbox  # noqa: E402
@@ -53,14 +59,17 @@ class ServerApiTests(unittest.TestCase):
         self._tmp.cleanup()
 
     def _json_call(self, server: AdeolaServer, method: str, path: str,
-                   payload: dict | None = None, headers: dict | None = None) -> tuple[int, dict]:
+                   payload: dict | None = None, headers: dict | None = None,
+                   client_ip: str = "127.0.0.1") -> tuple[int, dict]:
         body = json.dumps(payload).encode("utf-8") if payload is not None else b""
-        status, ctype, raw = server.dispatch(method, path, headers=headers or {}, body=body)
+        status, ctype, raw = server.dispatch(method, path, headers=headers or {}, body=body,
+                                             client_ip=client_ip)
         self.assertTrue(ctype.startswith("application/json"), ctype)
         return status, json.loads(raw.decode("utf-8"))
 
     def test_config_defaults_present(self):
         self.assertEqual(config.SERVER_HOST, "0.0.0.0")
+        self.assertFalse(config.SERVER_ALLOW_LAN)
         self.assertIsInstance(config.SERVER_PORT, int)
         self.assertIsInstance(config.SERVER_TOKEN, str)
 
@@ -131,32 +140,89 @@ class ServerApiTests(unittest.TestCase):
 
     def test_token_authentication(self):
         server = AdeolaServer(self.router, token="secret123")
+        phone = "100.101.102.103"
 
-        # Missing token -> 401
+        status, _ = self._json_call(server, "GET", "/api/status", client_ip=phone)
+        self.assertEqual(status, 401)
+        status, _ = self._json_call(
+            server, "GET", "/api/status", headers={"Authorization": "Bearer wrong"}, client_ip=phone
+        )
+        self.assertEqual(status, 401)
+        status, _ = self._json_call(
+            server, "GET", "/api/status", headers={"Authorization": "Bearer secret123"}, client_ip=phone
+        )
+        self.assertEqual(status, 200)
+        status, _ = self._json_call(
+            server, "GET", "/api/status", headers={"x-adeola-token": "secret123"}, client_ip=phone
+        )
+        self.assertEqual(status, 200)
+        status, _ = self._json_call(server, "GET", "/api/status?token=secret123", client_ip=phone)
+        self.assertEqual(status, 200)
+
+    def test_loopback_is_token_optional_but_rejects_a_wrong_token(self):
+        server = AdeolaServer(self.router, token="secret123")
         status, _ = self._json_call(server, "GET", "/api/status")
+        self.assertEqual(status, 200)
+        status, _ = self._json_call(server, "GET", "/api/status?token=wrong")
+        self.assertEqual(status, 401)
+        status, _ = self._json_call(server, "GET", "/api/status", client_ip="::1")
+        self.assertEqual(status, 200)
+
+    def test_remote_peer_without_configured_token_is_refused(self):
+        server = AdeolaServer(self.router, token="")
+        status, _ = self._json_call(server, "GET", "/api/status", client_ip="100.101.102.103")
+        self.assertEqual(status, 401)
+        status, _ = self._json_call(server, "POST", "/api/chat", {"text": "lock my pc"},
+                                    client_ip="100.101.102.103")
         self.assertEqual(status, 401)
 
-        # Wrong token -> 401
-        status, _ = self._json_call(
-            server, "GET", "/api/status", headers={"Authorization": "Bearer wrong"}
-        )
-        self.assertEqual(status, 401)
+    def test_lan_peer_is_refused_even_with_token(self):
+        server = AdeolaServer(self.router, token="secret123")
+        for ip in ("192.168.1.42", "10.0.0.5", "::ffff:192.168.1.42"):
+            status, _ = self._json_call(server, "GET", "/api/status?token=secret123", client_ip=ip)
+            self.assertEqual(status, 403, ip)
+        status, _, _ = server.dispatch("GET", "/hud", client_ip="192.168.1.42")
+        self.assertEqual(status, 403)
 
-        # Bearer token -> 200
-        status, _ = self._json_call(
-            server, "GET", "/api/status", headers={"Authorization": "Bearer secret123"}
-        )
-        self.assertEqual(status, 200)
+    def test_lan_peer_allowed_with_opt_in_and_token(self):
+        server = AdeolaServer(self.router, token="secret123")
+        with patch.object(config, "SERVER_ALLOW_LAN", True):
+            status, _ = self._json_call(server, "GET", "/api/status?token=secret123",
+                                        client_ip="192.168.1.42")
+            self.assertEqual(status, 200)
+            status, _ = self._json_call(server, "GET", "/api/status", client_ip="192.168.1.42")
+            self.assertEqual(status, 401)
 
-        # X-Adeola-Token header (case-insensitive) -> 200
-        status, _ = self._json_call(
-            server, "GET", "/api/status", headers={"x-adeola-token": "secret123"}
-        )
-        self.assertEqual(status, 200)
+    def test_client_access_classification(self):
+        self.assertEqual(client_access("127.0.0.1"), "loopback")
+        self.assertEqual(client_access("::1"), "loopback")
+        self.assertEqual(client_access("::ffff:127.0.0.1"), "loopback")
+        self.assertEqual(client_access("100.64.0.1"), "tailscale")
+        self.assertEqual(client_access("100.128.0.1"), "lan")
+        self.assertEqual(client_access("192.168.1.42"), "lan")
+        self.assertEqual(client_access("not-an-ip"), "lan")
 
-        # Query string ?token= -> 200
-        status, _ = self._json_call(server, "GET", "/api/status?token=secret123")
-        self.assertEqual(status, 200)
+    def test_token_is_generated_once_and_persisted(self):
+        path = Path(self._tmp.name) / "server_token"
+        first = load_or_create_token(path)
+        self.assertGreaterEqual(len(first), 24)
+        self.assertEqual(load_or_create_token(path), first)
+
+    def test_start_generates_token_for_non_loopback_bind(self):
+        server = AdeolaServer(self.router, host="0.0.0.0", port=0, token="")
+        with patch("app.server.load_or_create_token", return_value="generated-token"):
+            server.start()
+        try:
+            self.assertEqual(server.token, "generated-token")
+        finally:
+            server.stop()
+
+    def test_status_reports_is_cloud(self):
+        server = AdeolaServer(self.router)
+        _, data = self._json_call(server, "GET", "/api/status")
+        self.assertIs(data["is_cloud"], False)
+        _, tele = self._json_call(server, "GET", "/api/telemetry")
+        self.assertIs(tele["status"]["is_cloud"], False)
 
     def test_tailscale_ip_detection(self):
         fake_addrs = [

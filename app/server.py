@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import base64
+import hmac
 import io
 import ipaddress
 import json
 import queue
+import secrets
 import socket
 import threading
 import urllib.parse
@@ -17,6 +19,7 @@ from pathlib import Path
 import numpy as np
 
 from app import config
+from app.brain.remote import RemoteBrain
 from app.brain.traces import TraceAnalyzer
 from app.events import BUS
 from app.skills.loader import discover_skills, save_vault_output, suggest_skills_from_traces
@@ -25,6 +28,7 @@ _HUD_PATH = Path(__file__).resolve().parent / "ui" / "hud.html"
 _AVATAR_PATH = Path(__file__).resolve().parent.parent / "adeola-v1.avatar.json"
 
 _TAILSCALE_NET = ipaddress.ip_network("100.64.0.0/10")
+_TOKEN_PATH = config.DATA_DIR / "server_token"
 
 MANIFEST_JSON = {
     "name": "Adeola",
@@ -414,6 +418,35 @@ def tailscale_ip() -> str | None:
     return None
 
 
+def load_or_create_token(path: Path = _TOKEN_PATH) -> str:
+    """Return the persisted server token, creating one on first use so the phone's saved copy stays valid."""
+    try:
+        existing = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        existing = ""
+    if existing:
+        return existing
+    token = secrets.token_urlsafe(24)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(token, encoding="utf-8")
+    return token
+
+
+def client_access(client_ip: str) -> str:
+    """Classify a peer as 'loopback', 'tailscale' or 'lan' (anything else)."""
+    try:
+        ip = ipaddress.ip_address(client_ip)
+    except ValueError:
+        return "lan"
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    if ip.is_loopback:
+        return "loopback"
+    if isinstance(ip, ipaddress.IPv4Address) and ip in _TAILSCALE_NET:
+        return "tailscale"
+    return "lan"
+
+
 def _json_response(status: int, payload: dict) -> tuple[int, str, bytes]:
     return status, "application/json; charset=utf-8", json.dumps(payload).encode("utf-8")
 
@@ -464,19 +497,36 @@ class AdeolaServer:
         vn = getattr(speaker, "voice_name", "default")
         return vn() if callable(vn) else str(vn)
 
-    def _authorized(self, headers: dict[str, str], query: dict[str, list[str]]) -> bool:
-        if not self.token:
-            return True
+    def _token_matches(self, candidate: str) -> bool:
+        return bool(self.token) and hmac.compare_digest(candidate.encode("utf-8"), self.token.encode("utf-8"))
+
+    @staticmethod
+    def _presented_token(headers: dict[str, str], query: dict[str, list[str]]) -> str:
         lower_headers = {k.lower(): v for k, v in (headers or {}).items()}
         auth = lower_headers.get("authorization", "")
-        if auth.lower().startswith("bearer ") and auth[7:].strip() == self.token:
-            return True
-        if lower_headers.get("x-adeola-token", "").strip() == self.token:
-            return True
+        if auth.lower().startswith("bearer "):
+            return auth[7:].strip()
+        if header_token := lower_headers.get("x-adeola-token", "").strip():
+            return header_token
         q_tokens = query.get("token", [])
-        if q_tokens and q_tokens[0] == self.token:
-            return True
-        return False
+        return q_tokens[0] if q_tokens else ""
+
+    def _access_status(self, headers: dict[str, str], query: dict[str, list[str]],
+                       client_ip: str) -> int:
+        """200 allowed, 401 bad or missing token, 403 network not allowed.
+        Loopback is token-optional (a wrong token is still refused); every other peer needs
+        the token, and peers outside Tailscale are refused unless ADEOLA_ALLOW_LAN=1."""
+        access = client_access(client_ip)
+        presented = self._presented_token(headers, query)
+        if access == "loopback":
+            return 200 if not presented or self._token_matches(presented) else 401
+        if access == "lan" and not config.SERVER_ALLOW_LAN:
+            return 403
+        return 200 if self._token_matches(presented) else 401
+
+    def _authorized(self, headers: dict[str, str], query: dict[str, list[str]],
+                    client_ip: str = "127.0.0.1") -> bool:
+        return self._access_status(headers, query, client_ip) == 200
 
     def dispatch(
         self,
@@ -484,6 +534,7 @@ class AdeolaServer:
         path: str,
         headers: dict[str, str] | None = None,
         body: bytes = b"",
+        client_ip: str = "127.0.0.1",
     ) -> tuple[int, str, bytes]:
         """Pure request dispatcher returning (status_code, content_type, response_bytes)."""
         parsed = urllib.parse.urlparse(path)
@@ -491,7 +542,10 @@ class AdeolaServer:
         query = urllib.parse.parse_qs(parsed.query)
         hdrs = headers or {}
 
-        if route.startswith("/api/") and not self._authorized(hdrs, query):
+        access = self._access_status(hdrs, query, client_ip)
+        if access == 403:
+            return _json_response(403, {"error": "Only this PC and Tailscale devices may connect"})
+        if route.startswith("/api/") and access != 200:
             return _json_response(401, {"error": "Unauthorized"})
 
         upper = method.upper()
@@ -539,6 +593,7 @@ class AdeolaServer:
                     "assistant": config.ASSISTANT_NAME,
                     "brain": self._active_brain_name(),
                     "model": brain.model if brain else None,
+                    "is_cloud": isinstance(brain, RemoteBrain),
                     "voice": self._active_voice_name(),
                     "counts": {
                         "apps": len(tb.apps.apps) if tb and tb.apps else 0,
@@ -688,6 +743,7 @@ class AdeolaServer:
                 "assistant": config.ASSISTANT_NAME,
                 "brain": active_brain,
                 "model": brain.model if brain else None,
+                "is_cloud": isinstance(brain, RemoteBrain),
                 "voice": self._active_voice_name(),
                 "pinned": pinned,
                 "counts": {
@@ -908,6 +964,8 @@ class AdeolaServer:
         """Start the ThreadingHTTPServer on a background daemon thread."""
         if self._httpd is not None:
             return
+        if not self.token and client_access(self.host) != "loopback":
+            self.token = load_or_create_token()
         server_ref = self
 
         class _Handler(BaseHTTPRequestHandler):
@@ -915,7 +973,9 @@ class AdeolaServer:
                 length = int(self.headers.get("Content-Length", "0") or "0")
                 raw_body = self.rfile.read(length) if length > 0 else b""
                 hdrs = {k: v for k, v in self.headers.items()}
-                status, ctype, resp_bytes = server_ref.dispatch(method, self.path, hdrs, raw_body)
+                status, ctype, resp_bytes = server_ref.dispatch(
+                    method, self.path, hdrs, raw_body, client_ip=self.client_address[0]
+                )
                 self.send_response(status)
                 self.send_header("Content-Type", ctype)
                 self.send_header("Content-Length", str(len(resp_bytes)))
@@ -927,8 +987,9 @@ class AdeolaServer:
                 if parsed.path == "/api/events":
                     query = urllib.parse.parse_qs(parsed.query)
                     hdrs = {k: v for k, v in self.headers.items()}
-                    if not server_ref._authorized(hdrs, query):
-                        self.send_response(401)
+                    access = server_ref._access_status(hdrs, query, self.client_address[0])
+                    if access != 200:
+                        self.send_response(access)
                         self.send_header("Content-Type", "application/json; charset=utf-8")
                         self.end_headers()
                         self.wfile.write(b'{"error":"Unauthorized"}')
