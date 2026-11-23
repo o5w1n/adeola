@@ -1,7 +1,11 @@
 # Adeola
 
-A local text assistant for Windows 11 that opens apps and websites, searches the web,
-tells the time and locks the PC. Runs entirely on your machine with Ollama.
+A voice and text assistant for Windows 11 that runs on your own machine. She opens apps,
+websites and your projects, controls music and volume, remembers things for you, answers from
+your Obsidian notes, runs multi-step requests, and shows what she's doing in a browser HUD.
+Speech recognition (Whisper), her voice (Kokoro) and the default brain (Ollama `qwen3:4b`) all
+run locally. A cloud brain (Gemini, Groq, OpenRouter or Claude) is optional and off until you
+switch to it.
 
 ## Setup (PowerShell)
 
@@ -12,7 +16,8 @@ py -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-Ollama must be running with `qwen3:4b` pulled (`ollama pull qwen3:4b`).
+Ollama must be running with `qwen3:4b` pulled (`ollama pull qwen3:4b`). For the quick and coder
+brains (see [Brains](#brains-local-cloud-and-privacy)), also pull `qwen3:1.7b` and `qwen2.5-coder:3b`.
 
 ## Run
 
@@ -142,28 +147,101 @@ When a reply uses your notes, Adeola prints the note titles underneath:
 
 Sources are printed only — never spoken out loud. Saying `"remember that ..."` or `"note to self: ..."` also saves a dated markdown file in `data/captures/` that is indexed immediately.
 
-## Brain and voice shelf
+## Brains: local, cloud and privacy
 
-Switch local Ollama models (`BRAINS` in `config.py`) or Kokoro voice blends (`VOICES` in `config.py`) on the fly (she says `"One moment."` while loading a new brain):
+**Local shelf** (`BRAINS` in `config.py`): `quick` (`qwen3:1.7b`), `smart` (`qwen3:4b`, the default)
+and `coder` (`qwen2.5-coder:3b`). She says "One moment." while a new one loads.
 
-- **Brains:** `which brain are you on` · `switch to your quick brain` · `switch to your smart brain` · `use your coder brain` · `go local` · `switch to Claude`
-- **Voices:** `which voice are you using` · `use your calm voice` · `switch to your warm voice`
-- **Local honesty:** `do you cost anything` · `are you local` · `what needs the internet`
+- `which brain are you on` · `switch to your quick brain` · `use your coder brain` · `go local`
+- **Auto brain** (`AUTO_BRAIN = True`): coding questions move her to `coder`, and longer "why / explain /
+  compare" questions move her to `smart`. She never drops back down to `quick` automatically, and waits
+  `AUTO_SWITCH_COOLDOWN_SECONDS` (60) between automatic switches so the GPU doesn't thrash. Naming a
+  brain pins it; `use auto brain` unpins.
 
-## Android & Tailscale (`--serve`)
+**Cloud brains** (`CLOUD_BRAINS` in `config.py`): `gemini`, `groq`, `openrouter`, `claude`. Put the key
+in a `.env` file in the project folder (it's gitignored), for example `GEMINI_API_KEY=...`. The others
+use `GROQ_API_KEY`, `OPENROUTER_API_KEY` and `ANTHROPIC_API_KEY`. Then say `switch to gemini` or
+`go cloud` (which uses `ADEOLA_CLOUD_BRAIN`, default `gemini`). `go local` switches back. Without a key
+she stays local and tells you which variable is missing.
 
-Run Adeola's local HTTP server alongside the terminal or voice loop so you can reach her from your Android phone over Tailscale:
+**What a cloud brain sees.** By default, only your current question and your recent turns with that
+cloud brain. Your
+saved memory, your vault notes, and the output of private tools (`recall`, `recent_activity`,
+`forget`, `search_notes`) stay on this PC. When one of those tools runs, she answers from its output
+locally instead of sending it to the cloud. To share more, set either of these before starting:
+
+- `ADEOLA_CLOUD_SHARES_MEMORY=1`: remembered facts and memory tool output
+- `ADEOLA_CLOUD_SHARES_NOTES=1`: vault excerpts and note search output
+
+While a cloud brain is active, the HUD shows a `CLOUD · <PROVIDER>` badge, and `are you local` /
+`what needs the internet` say so honestly. A cloud request that fails tells you which provider
+failed and suggests `go local`.
+
+**Voices** (`VOICES` in `config.py`): `which voice are you using` · `use your calm voice` ·
+`switch to your warm voice`.
+
+## Multi-step requests (agent mode)
+
+Start a request with `agent:`, `research:` or `deep:` and she plans the tools it needs, runs them,
+reads the results and answers once every part is covered (at most 4 steps):
+
+- `agent: what's the date, what projects do I have, and when is my exam?`
+- `agent: open notepad and tell me the time`
+
+The same rules apply as for single commands: only the tools in `registry.py` can run, a repeated
+identical call is dropped, and on a cloud brain private tool output stays local.
+
+## Skills
+
+A skill is a saved routine in `skills/<name>/SKILL.md`: front matter (`name`, `description`,
+`triggers`) plus the prompt to run. Two come with the project: `morning-brief` and `project-status`.
+Run them from the HUD's **Skills & Actions** buttons or with `POST /api/skills/run`.
+`GET /api/skills` also returns `suggested`: requests you've sent to the model at least twice, as
+candidates for new skills.
+
+Skill output is saved as markdown in `data/outputs/`. Your vault stays read-only unless you set
+`ADEOLA_VAULT_OUT` to a folder (for example inside the vault) to write there instead. Saying a
+skill's trigger phrase out loud doesn't run it yet. For now skills run from the HUD or the API.
+
+## HUD, Android & Tailscale (`--serve`)
+
+Run Adeola's local HTTP server alongside the terminal or voice loop:
 
 ```powershell
 python main.py --serve              # text + HTTP server on port 8765
-python main.py --voice --serve      # PC voice + Android companion
+python main.py --voice --serve      # PC voice, plus the HUD and phone companion
 python main.py --serve --port 9000  # custom port
 ```
 
-- **Mobile Web / PWA companion:** open `http://<tailscale-ip>:8765` in Chrome or Brave on Android (Adeola prints the detected `100.x.y.z` Tailscale URL at startup) and tap **Add to Home screen**. Includes a text composer, **Hold to Talk** push-to-talk (16-bit PCM WAV → Whisper → Kokoro audio reply on your phone), quick-action chips, and Quick/Smart/Coder brain shelf pills.
-- **Optional security token:** set `$env:ADEOLA_TOKEN = "your-secret"` before starting. Pass `?token=your-secret` once in the mobile browser URL (saved in `localStorage`), or send `Authorization: Bearer <token>` / `X-Adeola-Token: <token>` on API calls.
+- **Visual HUD:** open `http://127.0.0.1:8765/hud` on the PC. By default it shows just her presence,
+  a plasma orb on black that reacts as she wakes, listens, thinks and speaks. The **Analysis** button
+  slides in a dashboard with her pipeline stages, latencies, route mix, conversation and traces, plus
+  a text box, brain pills and the Skills & Actions buttons. It updates live over server-sent events
+  (`/api/events`). On the PC it's the face of the voice loop: she still listens on the PC mic and
+  speaks on the PC speakers.
+- **Phone companion (PWA):** Adeola prints a Tailscale link at startup, like
+  `http://100.x.y.z:8765/?token=...`. Open it once in Chrome or Brave on Android (it saves the token)
+  and tap **Add to Home screen**. It has a text composer, **Hold to Talk** (your phone records, Whisper
+  transcribes on the PC, and Kokoro's reply plays on the phone), quick-action chips and brain pills.
+
+**Who can connect.** Access is checked per request, by where it comes from:
+
+| From | Allowed? |
+|---|---|
+| This PC (`127.0.0.1` / `::1`) | Yes, no token needed. A wrong token is still refused |
+| Tailscale devices (`100.64.0.0/10`) | Only with the token |
+| Anything else (home Wi-Fi, café Wi-Fi, …) | Refused (403), even with the token, unless `ADEOLA_ALLOW_LAN=1` |
+
+The token is `ADEOLA_TOKEN` if you set it. Otherwise one is generated on first `--serve` and kept in
+`data/server_token`, so the phone's saved copy keeps working. Delete that file to issue a new one;
+you'll then need to open the new link on the phone. Send it as `?token=...`,
+`Authorization: Bearer <token>` or `X-Adeola-Token: <token>`.
+
 - **JSON API endpoints:**
-  - `GET /api/status` — active brain, model, voice, and indexed counts (`apps`, `projects`, `notes`, `facts`)
+  - `GET /api/status` — active brain, model, voice, whether it's a cloud brain (`is_cloud`), and indexed counts (`apps`, `projects`, `notes`, `facts`)
+  - `GET /api/telemetry` — everything the HUD dashboard shows: status, latencies, route mix, recent traces
+  - `GET /api/events` — server-sent events stream of live state and finished turns
+  - `GET /api/skills` · `POST /api/skills/run` — list skills (and suggestions); run one by `{"name": "..."}`
   - `POST /api/chat` — `{"text": "...", "speak_on_pc": false, "return_audio": false}` → reply, route source, tool calls, note sources, and optional base64 WAV audio
   - `POST /api/voice` — `{"audio_wav": "<base64>", "speak_on_pc": false, "return_audio": true}` (or raw `audio/wav` body) → Whisper transcript + routed reply + optional base64 WAV audio
   - `GET /api/notes?q=<query>` — top matching Obsidian vault note titles, folders, and excerpts
@@ -172,14 +250,29 @@ python main.py --serve --port 9000  # custom port
 ## Test
 
 ```powershell
-python -m unittest -v                          # fast-path logic, no model needed
-python -m tests.eval_commands                  # score qwen3:4b on 20 commands (dry run)
+python -m unittest -v                          # all unit tests, no model or network needed
+python -m tests.eval_commands                  # score qwen3:4b on 35 commands (dry run)
 python -m tests.eval_commands --model qwen2.5:3b
 python -m tests.eval_commands --llm-only       # model alone, no fast path
 python -m tests.eval_commands --mode tools     # native tool calling instead of JSON
 ```
 
-The eval never opens anything, it only reports what would have run.
+The evals never open anything. They only report what would have run.
+
+**Eval harness** (local vs cloud, three tiers). T1 and T2 are single commands. T3 is multi-step
+`agent:` goals, and a T3 pass needs every listed tool called and a final reply. A turn that errored
+or couldn't reach the model always counts as a failure.
+
+```powershell
+python -m tests.eval_harness --save                       # smart brain -> data/evals/smart.json
+python -m tests.eval_harness --brain gemini --delay 2 --save
+python -m tests.eval_harness --tier 3                     # multi-step only
+python -m tests.eval_harness --brain mock-gemini          # offline check of the harness itself
+python -m tests.eval_harness --compare data/evals/a.json data/evals/b.json   # side-by-side table
+```
+
+Only compare runs from the same sitting. GPU and Ollama state drift enough between sessions to
+move latency by 100+ ms and flip borderline cases.
 
 ### Preflight
 
@@ -217,22 +310,33 @@ Rule: **"Done" means preflight passed** (exit code `0`, zero `FAIL` checks).
 
 ```
 "Adeola, open Brave"
-   → clean()        strip wake word and politeness → "open brave"
-   → fast path      regex + Start menu lookup      → open_app("brave")   ~0 ms
-   → (if unsure)    qwen3:4b answers in a fixed JSON shape → open_app("Spotify")  ~1–3 s
-   → Toolbox.run()  only the 5 tools in registry.py can ever execute
+   → clean()          strip wake word and politeness → "open brave"
+   → special routes   keep/skip answer, notes questions, agent: goals
+   → fast path        regex + Start menu lookup → open_app("brave")            ~0 ms
+   → (if unsure)      the active brain answers in a fixed JSON shape → open_app("Spotify")
+                      local qwen3:4b ~1 s · read-only tools get a second step to phrase the answer
+   → Toolbox.run()    only the tools in registry.py can ever execute
+   → trace + HUD      every turn is logged to SQLite and pushed to the HUD
 ```
 
 | File | Job |
 |---|---|
-| `app/config.py` | Model, aliases (`"vs code"` → Visual Studio Code), site shortcuts |
+| `app/config.py` | Brains, cloud providers, aliases, privacy and server settings; loads `.env` |
 | `app/tools/applications.py` | Indexes Start menu apps (incl. Store apps) and fuzzy-matches names |
 | `app/tools/registry.py` | The approved tools and their schemas for the model |
-| `app/brain/router.py` | Fast path, notes lookup, then model fallback |
+| `app/brain/router.py` | Turn handling: special routes, fast path, model turn, traces and HUD events |
+| `app/brain/switching.py` | Brain shelf, auto brain, cloud switching, and the "am I local" answers |
 | `app/brain/model.py` | Ollama calls: thinking off, temperature 0, model kept loaded, truncation retry |
-| `app/memory/store.py` | Local SQLite memory for facts, preferences, counters and recent activity |
+| `app/brain/remote.py` | Cloud brains over plain HTTP (OpenAI-compatible and Anthropic), with the privacy filter |
+| `app/brain/harness.py` | Agent mode: bounded plan → tools → observe → answer loop |
+| `app/brain/policy.py` | Auto brain: which local brain a request needs, with a cooldown |
+| `app/brain/traces.py` | Trace summaries and friction reports (`trace summary`, `what did you mishear`) |
+| `app/memory/store.py` | Local SQLite memory for facts, preferences, counters, activity and traces |
 | `app/memory/notes.py` | Read-only markdown index and excerpt search over your Obsidian vault |
-| `app/server.py` | Zero-dependency HTTP/Tailscale API server and mobile PWA companion (`--serve`) |
+| `app/skills/loader.py` | Finds `SKILL.md` skills and saves their output |
+| `app/events.py` | In-process event bus that feeds the HUD |
+| `app/server.py` | Zero-dependency HTTP server: HUD, phone companion, JSON API, access rules |
+| `app/ui/hud.html` | The HUD page (plain HTML/JS/WebGL, no build step, nothing loaded from the internet) |
 | `tools/preflight.py` | Live end-to-end check with hear/think/speak latency budget and offline verification |
 
 ## Customising
@@ -241,9 +345,7 @@ Rule: **"Done" means preflight passed** (exit code `0`, zero `FAIL` checks).
 - **New tool:** add a method to `Toolbox`, register it in `_funcs`, and add a schema to `SCHEMAS`.
   Anything destructive (deleting files, sending messages) should ask for confirmation first.
 
-## Next phases
+## What's next
 
-2. Voice: ~~push-to-talk with faster-whisper~~, ~~spoken replies with a blended Kokoro voice~~ (done), ~~wake word~~ (done; train "Adeola" with [docs/wake_word.md](docs/wake_word.md))
-3. ~~Memory: SQLite for preferences and projects~~ (done)
-4. ~~Notes: read-only answers from your Obsidian vault with printed sources~~ (done)
-5. ~~Android: HTTP server reachable over Tailscale~~ (done)
+Open work is tracked in [tasks/todo.md](tasks/todo.md). To train the "Adeola" wake word, see
+[docs/wake_word.md](docs/wake_word.md).
