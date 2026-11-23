@@ -483,6 +483,47 @@ class ServerApiTests(unittest.TestCase):
         self.assertEqual(av["name"], "Adeola v1")
         self.assertIn("expressions", av)
 
+    def test_turn_confidence_propagates_to_bus_snapshot_telemetry_and_hud(self):
+        from app.events import EventBus
+
+        # 1. EventBus records clamped confidence in snapshot().last_turn
+        bus = EventBus(min_level_interval=0.0)
+        q = bus.subscribe()
+        bus.emit("turn", text="x", reply="y", source="chat", ms=12.0, confidence=0.4)
+        evt = q.get_nowait()
+        self.assertEqual(evt["confidence"], 0.4)
+        self.assertEqual(bus.snapshot()["last_turn"]["confidence"], 0.4)
+
+        bus.emit("turn", text="x", reply="y", source="fast", ms=1.0, confidence=1.5)
+        self.assertEqual(bus.snapshot()["last_turn"]["confidence"], 1.0)
+        bus.emit("turn", text="x", reply="y", source="none", ms=1.0, confidence=-0.2)
+        self.assertEqual(bus.snapshot()["last_turn"]["confidence"], 0.0)
+        bus.unsubscribe(q)
+
+        # 2. Router -> BUS -> /api/telemetry & /api/events snapshot carry live confidence
+        server = AdeolaServer(self.router)
+        self.router.handle("open Brave")
+        status_tel, tel = self._json_call(server, "GET", "/api/telemetry")
+        self.assertEqual(status_tel, 200)
+        self.assertEqual(tel["live"]["last_turn"]["confidence"], 1.0)
+        _, _, raw_sse = server.dispatch("GET", "/api/events")
+        sse_text = raw_sse.decode("utf-8")
+        snap = json.loads(sse_text.split("data: ", 1)[1].strip())
+        self.assertEqual(snap["last_turn"]["confidence"], 1.0)
+
+        # Offline router turn produces confidence 0.0
+        offline_router = Router(self.toolbox, brain=None, notes=self.notes)
+        offline_srv = AdeolaServer(offline_router)
+        offline_router.handle("do something weird")
+        _, tel_off = self._json_call(offline_srv, "GET", "/api/telemetry")
+        self.assertEqual(tel_off["live"]["last_turn"]["confidence"], 0.0)
+
+        # 3. HUD includes confidence badge markup and SSE/telemetry rendering
+        _, _, raw_hud = server.dispatch("GET", "/hud")
+        hud_html = raw_hud.decode("utf-8")
+        for needle in ('id="last-turn-conf"', "renderConfidence", "d.confidence", "conf-high", "conf-mid", "conf-low"):
+            self.assertIn(needle, hud_html)
+
 
 if __name__ == "__main__":
     unittest.main()

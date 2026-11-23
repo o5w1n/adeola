@@ -679,6 +679,34 @@
       color: var(--danger);
       border-color: rgba(248, 113, 113, 0.35);
     }
+    .last-turn-meta {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .conf-badge {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 999px;
+      border: 1px solid var(--border-subtle);
+      letter-spacing: 0.04em;
+    }
+    .conf-badge.conf-high {
+      color: var(--emerald);
+      background: rgba(52, 211, 153, 0.12);
+      border-color: rgba(52, 211, 153, 0.35);
+    }
+    .conf-badge.conf-mid {
+      color: var(--amber);
+      background: rgba(251, 191, 36, 0.14);
+      border-color: rgba(251, 191, 36, 0.4);
+    }
+    .conf-badge.conf-low {
+      color: var(--danger);
+      background: rgba(248, 113, 113, 0.14);
+      border-color: rgba(248, 113, 113, 0.4);
+    }
     .insight-mid {
       font-size: 12px;
       color: var(--dim);
@@ -960,7 +988,10 @@
     <div class="card grow">
       <div class="card-title">
         <span>LATEST TURN &amp; FRICTION</span>
-        <span id="last-turn-source" style="color:var(--emerald)">fast</span>
+        <span class="last-turn-meta">
+          <span id="last-turn-source" style="color:var(--emerald)">fast</span>
+          <span id="last-turn-conf" class="conf-badge" title="Routing confidence" hidden></span>
+        </span>
       </div>
       <div style="font-size:12.5px; color:var(--text); line-height:1.45;" id="last-turn-box">
         Say <strong>"Adeola, open Brave"</strong> or press any letter key in Orb mode to interact.
@@ -1060,6 +1091,18 @@
     // so the telemetry refresh that follows every turn doesn't wipe it straight away.
     const WARNING_HOLD_MS = 60000;
     let lastWarningAt = 0;
+    function renderConfidence(conf) {
+      const el = document.getElementById("last-turn-conf");
+      if (!el) return;
+      if (typeof conf !== "number" || Number.isNaN(conf)) {
+        el.hidden = true;
+        return;
+      }
+      const c = Math.max(0, Math.min(1, conf));
+      el.textContent = Math.round(c * 100) + "%";
+      el.className = "conf-badge " + (c >= 0.8 ? "conf-high" : c >= 0.5 ? "conf-mid" : "conf-low");
+      el.hidden = false;
+    }
 
     function showWarning(where, message) {
       lastWarningAt = Date.now();
@@ -1753,6 +1796,11 @@
           `<div style="color:var(--cyan); font-weight:600; margin-bottom:3px;">“${escapeHtml(latest.raw_text)}”</div>` +
           `<div>${escapeHtml(latest.reply)}</div>`;
       }
+      // The card shows the newest *traced* turn; some turns (trace summaries, failed trace writes)
+      // aren't traced, so only show the live confidence when it belongs to the turn on the card.
+      const lt = live.last_turn;
+      const sameTurn = lt && traces.length && lt.text === traces[0].clean_text;
+      renderConfidence(sameTurn ? lt.confidence : null);
 
       // Populate Secondary Tabs
       document.getElementById("conv-count").textContent = traces.length + " recent turns";
@@ -1827,7 +1875,11 @@
           if (d.type === "warning") {
             showWarning(d.where || "warning", d.message || "");
           }
+          if (d.type === "snapshot" && d.last_turn && typeof d.last_turn.confidence === "number") {
+            renderConfidence(d.last_turn.confidence);
+          }
           if (d.type === "turn") {
+            if (typeof d.confidence === "number") renderConfidence(d.confidence);
             loadTelemetry();
             loadSkills();   // keeps the "asked more than once" list current
           }

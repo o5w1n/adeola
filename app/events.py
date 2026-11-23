@@ -78,6 +78,7 @@ class EventBus:
 
             if kind == "turn":
                 self._state["think_ms"] = round(float(payload.get("ms", 0.0)), 1)
+                conf = payload.get("confidence")
                 self._state["last_turn"] = {
                     "text": payload.get("text", ""),
                     "reply": payload.get("reply", ""),
@@ -87,6 +88,7 @@ class EventBus:
                     "calls": payload.get("calls", []),
                     "sources": payload.get("sources", []),
                     "steps": payload.get("steps", 1),
+                    "confidence": round(max(0.0, min(1.0, float(conf))), 2) if conf is not None else None,
                     "ts": time.strftime("%H:%M:%S"),
                 }
 
