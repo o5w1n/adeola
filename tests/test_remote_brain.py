@@ -13,7 +13,7 @@ from pathlib import Path  # noqa: E402
 from unittest.mock import patch  # noqa: E402
 
 from app import config  # noqa: E402
-from app.brain.remote import RemoteBrain, cloud_blocked_tools  # noqa: E402
+from app.brain.remote import ProviderHTTPError, RemoteBrain, cloud_blocked_tools  # noqa: E402
 from app.brain.router import Router  # noqa: E402
 from app.brain.switching import INTERNET_HONESTY_TEXT, LOCAL_HONESTY_TEXT  # noqa: E402
 from app.events import BUS  # noqa: E402
@@ -105,8 +105,34 @@ class RemoteBrainTests(unittest.TestCase):
             self.assertFalse(router.policy.pinned)
         mem.close()
 
+    def test_groq_json_validate_failure_becomes_a_chat_reply(self):
+        """Groq's json_object mode answers 400 when the model replies in prose; that prose is the answer."""
+        body = json.dumps({"error": {
+            "message": "Failed to generate JSON. Please adjust your prompt.",
+            "type": "invalid_request_error", "code": "json_validate_failed",
+            "failed_generation": "I'm Adeola, your assistant. " + "x" * 600,
+        }})
+
+        def fake_post(url, headers, payload, timeout=30.0):
+            raise ProviderHTTPError(url, 400, body)
+
+        rb = RemoteBrain(SCHEMAS, provider_name="groq", api_key="k", requester=fake_post)
+        calls, reply = rb.decide("who are you")
+        self.assertEqual(calls, [])
+        self.assertTrue(reply.startswith("I'm Adeola, your assistant."))
+        self.assertFalse(rb.last_stats.get("parse_error"))
+
+    def test_other_http_errors_still_raise(self):
+        def fake_post(url, headers, payload, timeout=30.0):
+            raise ProviderHTTPError(url, 429, '{"error": {"code": "rate_limit_exceeded"}}')
+
+        rb = RemoteBrain(SCHEMAS, provider_name="groq", api_key="k", requester=fake_post)
+        with self.assertRaises(RuntimeError):
+            rb.decide("who are you")
+
     def test_remote_system_prompt_is_honest_about_cloud(self):
         rb = RemoteBrain(SCHEMAS, provider_name="gemini", api_key="k", requester=lambda *a, **kw: {})
+        self.assertNotIn("running locally", rb.system_prompt)
         self.assertNotIn("never send conversation data", rb.system_prompt)
         self.assertNotIn("Only opening websites and web search use the internet.", rb.system_prompt)
         self.assertIn("gemini cloud brain", rb.system_prompt)

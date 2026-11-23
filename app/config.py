@@ -31,7 +31,9 @@ DEFAULT_CLOUD_BRAIN = os.getenv("ADEOLA_CLOUD_BRAIN", "gemini")
 CLOUD_BRAINS = {
     "gemini": {
         "provider": "openai_compat",
-        "model": os.getenv("ADEOLA_GEMINI_MODEL", "gemini-3.8-flash"),
+        # gemini-3.8-flash is the latest ID but frequently 503s/times out on free tier;
+        # override via ADEOLA_GEMINI_MODEL if needed.
+        "model": os.getenv("ADEOLA_GEMINI_MODEL", "gemini-3.5-flash-lite"),
         "api_key_env": "GEMINI_API_KEY",
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
     },

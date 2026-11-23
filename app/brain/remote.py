@@ -30,6 +30,15 @@ def cloud_blocked_tools() -> set[str]:
     return blocked
 
 
+class ProviderHTTPError(RuntimeError):
+    """An HTTP error from a cloud provider, keeping the full response body for inspection."""
+
+    def __init__(self, url: str, status: int, body: str):
+        super().__init__(f"HTTP {status} from {url}: {body[:400]}")
+        self.status = status
+        self.body = body
+
+
 def _post_json(url: str, headers: dict[str, str], payload: dict, timeout: float = 30.0) -> dict:
     body = json.dumps(payload).encode("utf-8")
     merged_headers = {"User-Agent": "adeola/1.0", **headers}
@@ -40,10 +49,25 @@ def _post_json(url: str, headers: dict[str, str], payload: dict, timeout: float 
     except urllib.error.HTTPError as e:
         detail = ""
         try:
-            detail = e.read().decode("utf-8", errors="replace")[:400]
+            detail = e.read().decode("utf-8", errors="replace")
         except Exception:
             pass
-        raise RuntimeError(f"HTTP {e.code} from {url}: {detail or e.reason}") from e
+        raise ProviderHTTPError(url, e.code, detail or str(e.reason)) from e
+
+
+def _rejected_prose(err: ProviderHTTPError) -> str | None:
+    """Groq's json_object mode returns 400 json_validate_failed when the model answers in plain
+    prose. That prose is a usable chat reply; return it, or None for any other error."""
+    if err.status != 400:
+        return None
+    try:
+        info = json.loads(err.body).get("error") or {}
+    except (json.JSONDecodeError, AttributeError):
+        return None
+    if info.get("code") != "json_validate_failed":
+        return None
+    text = str(info.get("failed_generation") or "").strip()
+    return text if text and not text.startswith("{") else None
 
 
 class RemoteBrain:
@@ -81,6 +105,9 @@ class RemoteBrain:
 
     def _build_system_prompt(self) -> str:
         base = BASE_PROMPT.replace(
+            "assistant running locally on the user's Windows 11 PC",
+            "assistant on the user's Windows 11 PC",
+        ).replace(
             "You run 100% on this PC (Ollama, Whisper, Kokoro). You cost nothing to run and never send conversation data to the cloud.",
             f"You are currently running on the {self.name} cloud brain ({self.model}) for stronger reasoning, while voice and local tools stay on this PC.",
         ).replace(
@@ -165,7 +192,14 @@ class RemoteBrain:
             "max_tokens": max_tokens,
             "response_format": {"type": "json_object"},
         }
-        data = self._requester(url, headers, payload)
+        try:
+            data = self._requester(url, headers, payload)
+        except ProviderHTTPError as e:
+            prose = _rejected_prose(e)
+            if prose is None:
+                raise
+            raw = json.dumps({"actions": [], "reply": prose})
+            return raw, "stop", 0, 0, (time.perf_counter() - t0) * 1000
         elapsed_ms = (time.perf_counter() - t0) * 1000
         choice = (data.get("choices") or [{}])[0]
         raw = ((choice.get("message") or {}).get("content") or "").strip()
