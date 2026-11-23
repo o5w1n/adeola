@@ -142,6 +142,7 @@ def main() -> None:
 
     print(f"{N}: Indexing your apps...")
     router = build(args.model, not args.no_model)
+    router.verbose = args.verbose
     tb = router.toolbox
     print(f"{N}: Found {len(tb.apps.apps)} apps, {len(tb.projects.all())} projects and "
           f"{len(router.notes.notes)} notes; I remember {len(tb.memory.facts())} things.")

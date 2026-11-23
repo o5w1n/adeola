@@ -658,6 +658,11 @@
       border: 1px solid rgba(56, 189, 248, 0.3);
       flex-shrink: 0;
     }
+    .insight-tag.warning {
+      background: rgba(248, 113, 113, 0.14);
+      color: #f87171;
+      border-color: rgba(248, 113, 113, 0.35);
+    }
     .insight-mid {
       font-size: 12px;
       color: var(--dim);
@@ -1031,6 +1036,28 @@
 
     let liveState = "idle";
     let simState = null;
+    // A background failure (auto-switch, trace write) stays in the insight strip this long,
+    // so the telemetry refresh that follows every turn doesn't wipe it straight away.
+    const WARNING_HOLD_MS = 60000;
+    let lastWarningAt = 0;
+
+    function showWarning(where, message) {
+      lastWarningAt = Date.now();
+      const tag = document.querySelector("#insight-bar .insight-tag");
+      tag.textContent = "WARNING";
+      tag.classList.add("warning");
+      document.getElementById("insight-summary").textContent = `${where}: ${message}`;
+      // No turn may follow, so refresh once the hold ends to put the normal insight back.
+      setTimeout(loadTelemetry, WARNING_HOLD_MS + 100);
+    }
+
+    function warningIsFresh() {
+      if (Date.now() - lastWarningAt < WARNING_HOLD_MS) return true;
+      const tag = document.querySelector("#insight-bar .insight-tag");
+      tag.textContent = "INSIGHT";
+      tag.classList.remove("warning");
+      return false;
+    }
     let targetLevel = 0.0;
     let smoothLevel = 0.0;
     let curSpeed = 0.55, curSwirl = 1.15, curBright = 0.72;
@@ -1690,7 +1717,7 @@
 
       // Insight & Friction
       if (d.insight) {
-        document.getElementById("insight-summary").textContent = d.insight.summary;
+        if (!warningIsFresh()) document.getElementById("insight-summary").textContent = d.insight.summary;
         document.getElementById("friction-box").textContent = d.insight.friction;
       }
 
@@ -1774,6 +1801,9 @@
           }
           if (typeof d.speak_ms === "number" && d.speak_ms > 0) {
             document.getElementById("sig-speak").textContent = Math.round(d.speak_ms) + " ms";
+          }
+          if (d.type === "warning") {
+            showWarning(d.where || "warning", d.message || "");
           }
           if (d.type === "turn") {
             loadTelemetry();

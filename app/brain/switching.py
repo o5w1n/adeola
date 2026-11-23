@@ -8,6 +8,7 @@ import os
 from app import config
 from app.brain.policy import BrainPolicy
 from app.brain.remote import RemoteBrain
+from app.events import BUS
 from app.tools.registry import SCHEMAS
 
 LOCAL_HONESTY_TEXT = (
@@ -32,6 +33,7 @@ class BrainSwitching:
     _remote_brains: dict[str, RemoteBrain]
     speaker: object | None
     policy: BrainPolicy
+    verbose: bool
 
     def _which_brain(self) -> str:
         if self.brain is None:
@@ -89,17 +91,26 @@ class BrainSwitching:
                 else getattr(self.brain, "model", config.MODEL))
         return f"Auto brain routing is on (currently on {name})."
 
+    def _warn(self, where: str, message: str) -> None:
+        """A background step failed but the turn carries on: tell the HUD, and the terminal under -v."""
+        BUS.emit("warning", where=where, message=message)
+        if self.verbose:
+            print(f"   [warning] {where}: {message}")
+
     def _maybe_auto_switch(self, text: str, has_notes: bool = False) -> None:
         if self.brain is None or isinstance(self.brain, RemoteBrain) or not hasattr(self.brain, "switch_model"):
             return
         current = (self.brain.brain_name() if hasattr(self.brain, "brain_name")
                    else getattr(self.brain, "model", config.MODEL))
         rec = self.policy.recommend(text, current_brain=current, has_notes=has_notes)
-        if rec:
-            try:
-                self.brain.switch_model(rec)
-            except Exception:
-                pass
+        if not rec:
+            return
+        try:
+            ok, msg = self.brain.switch_model(rec)
+        except Exception as e:
+            ok, msg = False, f"{e.__class__.__name__}: {e}"
+        if not ok:
+            self._warn("auto_switch", f"Couldn't switch to the {rec} brain, staying on {current}. {msg}")
 
     def _switch_brain(self, target: str) -> str:
         key = target.strip().lower()

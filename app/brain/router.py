@@ -210,6 +210,7 @@ class Router(BrainSwitching):
         self.speaker = speaker
         self.policy = BrainPolicy()
         self.harness = AgentHarness(toolbox)
+        self.verbose = False
         self._greeting_idx = 0
         self._ack_idx = 0
 
@@ -584,5 +585,5 @@ class Router(BrainSwitching):
                 retried=bool(stats.get("retried", False)) if res.source != "fast" else False,
                 steps=res.steps,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            self._warn("trace", f"Couldn't save this turn's trace ({e.__class__.__name__}: {e}).")
