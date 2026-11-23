@@ -1674,14 +1674,16 @@
       for (const b of ["auto", "quick", "smart", "coder", "gemini", "groq"]) {
         const btn = document.getElementById("brain-" + b);
         if (!btn) continue;
-        if (b === "auto") btn.classList.toggle("active", !st.pinned && !isCloud);
-        else btn.classList.toggle("active", (st.pinned || isCloud) && activeBrain === b);
+        const isAuto = Boolean(st.auto_brain) && !isCloud;
+        if (b === "auto") btn.classList.toggle("active", isAuto);
+        else btn.classList.toggle("active", !isAuto && activeBrain === b);
       }
 
       const modeBadge = document.getElementById("routing-mode-badge");
-      modeBadge.textContent = isCloud
-        ? ("Cloud · " + activeBrain)
-        : (st.pinned ? ("Pinned · " + activeBrain) : ("Auto · " + activeBrain));
+      modeBadge.textContent = isCloud ? ("Cloud · " + activeBrain)
+        : st.auto_brain ? ("Auto · " + activeBrain)
+        : st.pinned ? ("Pinned · " + activeBrain)
+        : ("Local · " + activeBrain);
       modeBadge.style.color = isCloud ? "var(--amber)" : "var(--emerald)";
       document.getElementById("fast-rate-val").textContent = (m.fast_hit_rate ?? 100) + "%";
       document.getElementById("avg-ms-sub").textContent = "avg " + Math.round(m.avg_ms || 0) + " ms per turn";

@@ -32,7 +32,8 @@ class TraceAnalyzer:
         if self.memory is None or not hasattr(self.memory, "recent_traces"):
             return "Trace logging is switched off because memory is disabled."
         traces = self.memory.recent_traces(limit=100)
-        mode_str = "auto brain routing" if auto_brain else f"pinned to {current_brain or 'manual'}"
+        mode_str = ("auto brain routing" if auto_brain
+                    else f"my {current_brain} brain" if current_brain else "a fixed brain")
         if not traces:
             return f"No turns logged yet. I'm currently running with {mode_str}."
         n = len(traces)

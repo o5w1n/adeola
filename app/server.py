@@ -643,6 +643,7 @@ class AdeolaServer:
         brain = getattr(self.router, "brain", None)
         policy = getattr(self.router, "policy", None)
         pinned = bool(getattr(policy, "pinned", False)) if policy else False
+        auto_brain = bool(getattr(policy, "auto_active", False)) if policy else False
         active_brain = self._active_brain_name()
         live = BUS.snapshot()
 
@@ -718,7 +719,7 @@ class AdeolaServer:
 
         analyzer = TraceAnalyzer(mem)
         insight = {
-            "summary": analyzer.summary_report(auto_brain=not pinned, current_brain=active_brain),
+            "summary": analyzer.summary_report(auto_brain=auto_brain, current_brain=active_brain),
             "friction": analyzer.friction_report(),
         }
 
@@ -746,6 +747,7 @@ class AdeolaServer:
                 "is_cloud": isinstance(brain, RemoteBrain),
                 "voice": self._active_voice_name(),
                 "pinned": pinned,
+                "auto_brain": auto_brain,
                 "counts": {
                     "apps": n_apps,
                     "projects": n_projects,

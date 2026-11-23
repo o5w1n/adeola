@@ -153,10 +153,13 @@ Sources are printed only — never spoken out loud. Saying `"remember that ..."`
 and `coder` (`qwen2.5-coder:3b`). She says "One moment." while a new one loads.
 
 - `which brain are you on` · `switch to your quick brain` · `use your coder brain` · `go local`
-- **Auto brain** (`AUTO_BRAIN = True`): coding questions move her to `coder`, and longer "why / explain /
+- **Auto brain** is **off by default**. On a 6 GB GPU the smart and coder models don't fit together, so
+  every automatic switch is a full reload: about 5.3 s to coder and 5.8 s back, against about 0.8 s for a
+  normal turn. `python -m tools.preflight` times it on your machine. Turn it on with
+  `ADEOLA_AUTO_BRAIN=1`. Then coding questions move her to `coder` and longer "why / explain /
   compare" questions move her to `smart`. She never drops back down to `quick` automatically, and waits
-  `AUTO_SWITCH_COOLDOWN_SECONDS` (60) between automatic switches so the GPU doesn't thrash. Naming a
-  brain pins it; `use auto brain` unpins.
+  `AUTO_SWITCH_COOLDOWN_SECONDS` (60) between automatic switches. Naming a brain pins it;
+  `use auto brain` unpins.
 
 **Cloud brains** (`CLOUD_BRAINS` in `config.py`): `gemini`, `groq`, `openrouter`, `claude`. Put the key
 in a `.env` file in the project folder (it's gitignored), for example `GEMINI_API_KEY=...`. The others

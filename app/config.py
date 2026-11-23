@@ -57,7 +57,9 @@ CLOUD_BRAINS = {
 # Cloud privacy: when using a RemoteBrain, send only the current prompt unless opted in.
 CLOUD_SHARES_NOTES = os.getenv("ADEOLA_CLOUD_SHARES_NOTES") == "1"
 CLOUD_SHARES_MEMORY = os.getenv("ADEOLA_CLOUD_SHARES_MEMORY") == "1"
-AUTO_BRAIN = True
+# Off by default: on a 6 GB GPU the smart and coder models don't fit together, so each automatic
+# switch is a full reload (~5.5 s vs ~0.8 s for a normal turn). ADEOLA_AUTO_BRAIN=1 turns it on.
+AUTO_BRAIN = os.getenv("ADEOLA_AUTO_BRAIN") == "1"
 AUTO_SWITCH_COOLDOWN_SECONDS = 60.0
 KEEP_ALIVE = "30m"      # keep the model loaded so replies stay fast
 KEEP_WARM_SECONDS = 0   # 0 = off (saves GPU memory); set e.g. 600 to ping Ollama every 10 idle minutes

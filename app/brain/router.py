@@ -319,7 +319,7 @@ class Router(BrainSwitching):
             name = (self.brain.brain_name() if hasattr(self.brain, "brain_name")
                     else getattr(self.brain, "model", config.MODEL))
         return TraceAnalyzer(self.toolbox.memory).summary_report(
-            auto_brain=not self.policy.pinned, current_brain=name
+            auto_brain=self.policy.auto_active, current_brain=name
         )
 
     def _trace_friction(self) -> str:

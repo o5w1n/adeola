@@ -224,6 +224,15 @@ class ServerApiTests(unittest.TestCase):
         _, tele = self._json_call(server, "GET", "/api/telemetry")
         self.assertIs(tele["status"]["is_cloud"], False)
 
+    def test_telemetry_auto_brain_reflects_config_not_just_pinning(self):
+        server = AdeolaServer(self.router)
+        self.router.policy.pinned = False
+        for enabled in (False, True):
+            with patch.object(config, "AUTO_BRAIN", enabled):
+                _, tele = self._json_call(server, "GET", "/api/telemetry")
+            self.assertIs(tele["status"]["auto_brain"], enabled)
+            self.assertEqual("auto brain routing" in tele["insight"]["summary"], enabled)
+
     def test_tailscale_ip_detection(self):
         fake_addrs = [
             (2, 1, 6, "", ("192.168.1.42", 0)),

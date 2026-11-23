@@ -730,6 +730,33 @@ class TwoStepAgentLoopTests(unittest.TestCase):
 
 
 class AutoBrainPolicyTests(unittest.TestCase):
+    """Auto brain is off by default (see config); these tests exercise it switched on."""
+
+    def setUp(self):
+        from unittest.mock import patch
+        patcher = patch.object(config, "AUTO_BRAIN", True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_auto_brain_is_off_by_default(self):
+        from unittest.mock import patch
+
+        from app.brain.policy import BrainPolicy
+        with patch.dict(os.environ, {"ADEOLA_AUTO_BRAIN": ""}):
+            import importlib
+            fresh = importlib.reload(config)
+            try:
+                self.assertFalse(fresh.AUTO_BRAIN)
+            finally:
+                importlib.reload(config)
+        with patch.object(config, "AUTO_BRAIN", False):
+            self.assertIsNone(BrainPolicy().recommend("write a python function", current_brain="smart"))
+            self.assertFalse(BrainPolicy().auto_active)
+            reply = run(Router(Toolbox(FAKE_APPS), FakeBrain()), "use auto brain").reply
+            self.assertIn("turned off", reply)
+            self.assertIn("ADEOLA_AUTO_BRAIN=1", reply)
+            self.assertNotIn("is on", reply)
+
     def test_classify_and_vram_thrash_guard(self):
         from app.brain.policy import BrainPolicy, classify_task
         self.assertEqual(classify_task("write a python function to parse json"), "coder")

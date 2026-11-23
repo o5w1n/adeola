@@ -85,6 +85,9 @@ class BrainSwitching:
 
     def _enable_auto_brain(self) -> str:
         self.policy.pinned = False
+        if not config.AUTO_BRAIN:
+            return ("Auto brain is turned off in my settings, because switching models on this GPU "
+                    "takes about five seconds each time. Set ADEOLA_AUTO_BRAIN=1 to turn it on.")
         if self.brain is None:
             return "Auto brain routing is on, though the local model is currently switched off."
         name = (self.brain.brain_name() if hasattr(self.brain, "brain_name")

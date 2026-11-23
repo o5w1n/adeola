@@ -52,6 +52,11 @@ class BrainPolicy:
         self.pinned: bool = pinned
         self.last_auto_switch: float = 0.0
 
+    @property
+    def auto_active(self) -> bool:
+        """Auto routing actually happens only when it's enabled in config and no brain is pinned."""
+        return config.AUTO_BRAIN and not self.pinned
+
     def recommend(
         self,
         text: str,
@@ -60,7 +65,7 @@ class BrainPolicy:
         now: float | None = None,
     ) -> str | None:
         """Return target brain key ('coder' or 'smart') if an automatic switch is warranted."""
-        if not config.AUTO_BRAIN or self.pinned:
+        if not self.auto_active:
             return None
         target = classify_task(text, has_notes=has_notes)
         if target not in config.BRAINS or target == current_brain:
