@@ -7,20 +7,20 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-import os
 import re
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from app import config
 from app.brain.harness import AgentHarness
 from app.brain.policy import BrainPolicy
 from app.brain.remote import RemoteBrain, cloud_blocked_tools
+from app.brain.switching import BrainSwitching
 from app.brain.traces import TraceAnalyzer
 from app.events import BUS
 from app.memory.notes import NotesIndex, is_recency_query
-from app.tools.registry import OBSERVATION_TOOLS, SCHEMAS, Toolbox
+from app.tools.registry import OBSERVATION_TOOLS, Toolbox
 
 HELP_TEXT = ("I can open apps, websites and your projects, control music and volume, search the web, remember things "
              "for you, answer from your notes, switch brains and voices, tell you the time and lock your PC. Try: "
@@ -50,6 +50,7 @@ GREETING_REPLIES = (
     "Hi! Ready when you are.",
     "Hey there — what are we working on?",
 )
+_UNSURE = "Sorry, I'm not sure how to help with that."
 _THANKS_ACK = re.compile(
     r"^(?:thanks|thank you|thx|ty|appreciate it|much appreciated|"
     r"nice|nice one|cool|sweet|awesome|great|good job|well done|"
@@ -78,14 +79,6 @@ _HONESTY_LOCAL = re.compile(
 )
 _HONESTY_INTERNET = re.compile(
     r"^(?:what (?:needs|uses|requires) (?:the )?internet|what can(?:'t| not) you do offline)$"
-)
-LOCAL_HONESTY_TEXT = (
-    "I run locally on this PC with Ollama, Whisper and Kokoro. I cost nothing to run, "
-    "and nothing leaves your machine unless you ask me to open a website or search the web."
-)
-INTERNET_HONESTY_TEXT = (
-    "Only web search, opening websites, and first-run model downloads need the internet. "
-    "Everything else — apps, media, projects, memory, notes and voice — runs offline on this PC."
 )
 _SPLIT = re.compile(r"\s*(?:,|\band\b|\bthen\b)\s*")
 
@@ -135,10 +128,6 @@ _GO_CLOUD = re.compile(
 _WHICH_BRAIN = re.compile(
     r"^(?:(?:which|what) (?:brain|model|llm) (?:are you (?:on|using|running)|is (?:this|active|loaded))"
     r"|what(?:'s| is) your (?:current )?(?:brain|model)|list (?:your |the )?(?:brains|models))$")
-_BRAIN_ALIASES = {
-    "fast": "quick",
-    "coding": "coder",
-}
 _SWITCH_BRAIN = re.compile(
     r"^(?:(?:switch|change) (?:to )?(?:your |the |my )?([\w.:-]+) (?:brain|model)"
     r"|use (?:your |the |my )?([\w.:-]+) (?:brain|model)"
@@ -200,7 +189,7 @@ def clean(text: str, keep_case: bool = False) -> str:
     return t
 
 
-class Router:
+class Router(BrainSwitching):
     def __init__(self, toolbox: Toolbox, brain=None, notes: NotesIndex | None = None, speaker=None):
         self.toolbox = toolbox
         self.brain = brain
@@ -275,9 +264,7 @@ class Router:
             self._greeting_idx += 1
             return reply
         if _THANKS_ACK.match(text):
-            reply = ACK_REPLIES[self._ack_idx % len(ACK_REPLIES)]
-            self._ack_idx += 1
-            return reply
+            return self._next_ack()
         if _TIME.match(text):
             return [("get_time", {})]
         if _LOCK.match(text):
@@ -312,62 +299,6 @@ class Router:
             return f"{e}. Check the path and try again."
         return f"Added your {p.name} project. It'll open in {p.app.title().replace('Vs ', 'VS ')}."
 
-    def _which_brain(self) -> str:
-        if self.brain is None:
-            return "The local model is switched off."
-        name = (self.brain.brain_name() if hasattr(self.brain, "brain_name")
-                else getattr(self.brain, "model", config.MODEL))
-        model = getattr(self.brain, "model", config.MODEL)
-        return (f"I'm on my {name} brain ({model}). "
-                f"Local: {', '.join(config.BRAINS)}. Cloud: {', '.join(config.CLOUD_BRAINS)}.")
-
-    def _switch_cloud(self, name: str = config.DEFAULT_CLOUD_BRAIN) -> str:
-        key = name.strip().lower()
-        if key == "cloud":
-            key = config.DEFAULT_CLOUD_BRAIN
-        info = config.CLOUD_BRAINS.get(key)
-        if info is None:
-            return f"Unknown cloud brain '{name}'. Available: {', '.join(config.CLOUD_BRAINS)}."
-        env_var = info["api_key_env"]
-        api_key = os.getenv(env_var, "").strip()
-        if not api_key or api_key == "PUT-YOUR-KEY-HERE":
-            return f"The cloud brain has no API key set ({env_var}), so I'm staying on my local brain."
-        if self.brain is not None and not isinstance(self.brain, RemoteBrain):
-            self._local_brain = self.brain
-        remote = self._remote_brains.get(key)
-        if remote is None or remote.api_key != api_key:
-            tools = getattr(self.brain, "tools", None) or SCHEMAS
-            remote = RemoteBrain(tools, provider_name=key, api_key=api_key)
-            self._remote_brains[key] = remote
-        self.brain = remote
-        self.policy.pinned = True
-        return f"Switched to my {key} cloud brain ({remote.model})."
-
-    def _go_local(self) -> str:
-        self.policy.pinned = False
-        if self.speaker is not None and hasattr(self.speaker, "switch_voice"):
-            self.speaker.switch_voice("default")
-        if self._local_brain is not None and isinstance(self.brain, RemoteBrain):
-            self.brain = self._local_brain
-        if self.brain is None:
-            return "The local model is switched off."
-        target = config.BRAINS.get("smart", config.MODEL)
-        if getattr(self.brain, "model", None) != target:
-            if self.speaker is not None and hasattr(self.speaker, "say"):
-                self.speaker.say("One moment.")
-            ok, msg = self.brain.switch_model("smart")
-            if not ok:
-                return msg
-        return f"All local: smart brain ({getattr(self.brain, 'model', target)})."
-
-    def _enable_auto_brain(self) -> str:
-        self.policy.pinned = False
-        if self.brain is None:
-            return "Auto brain routing is on, though the local model is currently switched off."
-        name = (self.brain.brain_name() if hasattr(self.brain, "brain_name")
-                else getattr(self.brain, "model", config.MODEL))
-        return f"Auto brain routing is on (currently on {name})."
-
     def _trace_summary(self) -> str:
         name = ""
         if self.brain is not None:
@@ -379,106 +310,6 @@ class Router:
 
     def _trace_friction(self) -> str:
         return TraceAnalyzer(self.toolbox.memory).friction_report()
-
-    def _maybe_auto_switch(self, text: str, has_notes: bool = False) -> None:
-        if self.brain is None or isinstance(self.brain, RemoteBrain) or not hasattr(self.brain, "switch_model"):
-            return
-        current = (self.brain.brain_name() if hasattr(self.brain, "brain_name")
-                   else getattr(self.brain, "model", config.MODEL))
-        rec = self.policy.recommend(text, current_brain=current, has_notes=has_notes)
-        if rec:
-            try:
-                self.brain.switch_model(rec)
-            except Exception:
-                pass
-
-    def _switch_brain(self, target: str) -> str:
-        key = target.strip().lower()
-        key = _BRAIN_ALIASES.get(key, key)
-        if key in ("auto", "automatic"):
-            return self._enable_auto_brain()
-        if key in ("local", "lookout", "offline"):
-            return self._go_local()
-        if key in config.CLOUD_BRAINS or key == "cloud":
-            return self._switch_cloud(config.DEFAULT_CLOUD_BRAIN if key == "cloud" else key)
-        if self._local_brain is not None and isinstance(self.brain, RemoteBrain):
-            self.brain = self._local_brain
-        if self.brain is None:
-            return "The local model is switched off."
-        if key not in config.BRAINS and ":" not in target:
-            from rapidfuzz import fuzz, process
-            candidates = list(config.BRAINS) + list(config.CLOUD_BRAINS) + ["local", "auto"]
-            match = process.extractOne(key, candidates, scorer=fuzz.ratio, score_cutoff=75)
-            if match:
-                matched = match[0]
-                if matched == "auto":
-                    return self._enable_auto_brain()
-                if matched == "local":
-                    return self._go_local()
-                if matched in config.CLOUD_BRAINS:
-                    return self._switch_cloud(matched)
-                key = matched
-                target = matched
-            else:
-                return f"Unknown brain '{target}'. Available: {', '.join(config.BRAINS)}."
-        else:
-            target = key if key in config.BRAINS else target.strip()
-        resolved = config.BRAINS.get(key, target.strip())
-        if self.speaker is not None and hasattr(self.speaker, "say") and getattr(self.brain, "model", None) != resolved:
-            self.speaker.say("One moment.")
-        ok, msg = self.brain.switch_model(target)
-        if ok:
-            self.policy.pinned = True
-        return msg
-
-    def _which_voice(self) -> str:
-        if self.speaker is None:
-            return (f"Voice is off right now (default: {config.VOICE_BLEND}). "
-                    f"Available: {', '.join(config.VOICES)}.")
-        return (f"I'm using my {self.speaker.voice_name()} voice ({self.speaker.blend}). "
-                f"Available: {', '.join(config.VOICES)}.")
-
-    def _switch_voice(self, target: str) -> str:
-        key = target.strip().lower()
-        if self.speaker is None:
-            if key not in config.VOICES:
-                return f"Unknown voice '{target}'. Available: {', '.join(config.VOICES)}."
-            return f"Voice is off right now, but '{key}' is available when you run with --voice or --speak."
-        _, msg = self.speaker.switch_voice(target)
-        return msg
-
-    def _is_cloud_brain(self) -> bool:
-        return isinstance(self.brain, RemoteBrain)
-
-    def _honesty_local(self) -> str:
-        if not self._is_cloud_brain():
-            return LOCAL_HONESTY_TEXT
-        provider = self.brain.brain_name()
-        model = getattr(self.brain, "model", "")
-        if config.CLOUD_SHARES_MEMORY and config.CLOUD_SHARES_NOTES:
-            sharing = "Cloud sharing is enabled for both your saved memory and notes."
-        elif config.CLOUD_SHARES_MEMORY:
-            sharing = "Cloud sharing is enabled for your saved memory; your notes stay on this PC."
-        elif config.CLOUD_SHARES_NOTES:
-            sharing = "Cloud sharing is enabled for your notes; your saved memory stays on this PC."
-        else:
-            sharing = "Only your current question goes to the cloud — your saved memory and notes stay on this PC."
-        return (
-            f"Right now I'm using the {provider} cloud brain ({model}), so model requests leave this PC "
-            f"and may incur API costs. Voice, apps and local tools still run on your machine. "
-            f"{sharing} Say 'go local' anytime to switch back to Ollama."
-        )
-
-    def _honesty_internet(self) -> str:
-        if not self._is_cloud_brain():
-            return INTERNET_HONESTY_TEXT
-        provider = self.brain.brain_name()
-        model = getattr(self.brain, "model", "")
-        return (
-            f"Right now the {provider} cloud brain ({model}) uses the internet, along with web search, "
-            "opening websites, and first-run model downloads. Voice, apps, media, projects, memory and "
-            "notes stay on this PC. Say 'go local' to run offline with Ollama."
-        )
 
     def _brain_error_reply(self, exc: Exception) -> str:
         if self._is_cloud_brain():
@@ -539,214 +370,158 @@ class Router:
                         return False
         return True
 
+    def _blocked_tools(self) -> set[str]:
+        """Tools whose output must not reach the active brain (non-empty only on a cloud brain)."""
+        return cloud_blocked_tools() if self._is_cloud_brain() else set()
+
+    def _next_ack(self) -> str:
+        reply = ACK_REPLIES[self._ack_idx % len(ACK_REPLIES)]
+        self._ack_idx += 1
+        return reply
+
     def handle(self, raw: str) -> Result:
         start = time.perf_counter()
         text = clean(raw)
         if not text:
             return Result("Yes?", source="fast")
         BUS.emit("state", state="thinking", text=text, level=0.35)
-
         try:
-            # A pending "want me to remember that?" is answered by the very next command only.
-            if self.toolbox.pending_offer is not None:
-                if _KEEP.match(text) or _SKIP.match(text):
-                    res = Result(self.toolbox.answer_offer(keep=bool(_KEEP.match(text))), source="fast")
-                else:
-                    self.toolbox.pending_offer = None
-                    res = None
-            else:
-                res = None
-
-            if res is not None:
-                pass
-            elif _RECENT_NOTES_Q.match(text):
-                matched = self.notes_for(text, min_score=1)
-                if not matched:
-                    res = Result("You don't have any notes in your vault yet.", source="notes")
-                elif self.brain is None:
-                    titles = ", ".join(t for t, _ in matched)
-                    res = Result(f"Your most recent note is {matched[0][0]} (recent: {titles}).",
-                                 source="notes", sources=[t for t, _ in matched])
-                elif self._is_cloud_brain() and not config.CLOUD_SHARES_NOTES:
-                    titles = ", ".join(t for t, _ in matched)
-                    res = Result(
-                        f"Your most recent note is {matched[0][0]} (recent: {titles}). "
-                        "Cloud note sharing is off, so I answered locally — say 'go local' to summarize them.",
-                        source="notes",
-                        sources=[t for t, _ in matched],
-                        brain="local",
-                    )
-                else:
-                    try:
-                        calls, reply = self.brain.decide(
-                            clean(raw, keep_case=True), self._prompt_facts(text), notes=matched
-                        )
-                    except Exception as e:
-                        res = Result(self._brain_error_reply(e), source="none")
-                    else:
-                        blocked = cloud_blocked_tools() if self._is_cloud_brain() else set()
-                        hit_private = any(n in blocked for n, _ in calls)
-                        if not reply and calls and hasattr(self.brain, "synthesize"):
-                            obs = [(n, a, self.toolbox.run(n, a)) for n, a in calls]
-                            if hit_private:
-                                reply = " ".join(filter(None, (out for _, _, out in obs)))
-                            else:
-                                try:
-                                    reply = self.brain.synthesize(clean(raw, keep_case=True), obs).strip()
-                                except Exception:
-                                    reply = ""
-                        reply_text = reply or f"The most recent note in your vault is {matched[0][0]}."
-                        if not hit_private:
-                            self.brain.remember(text, reply_text)
-                        res = Result(reply_text, calls, source="notes",
-                                     sources=[t for t, _ in matched])
-            elif m := _NOTES_Q.match(text):
-                topic = m.group(1)
-                matched = self.notes_for(topic, min_score=1)
-                if not matched:
-                    res = Result(f"Your notes don't mention {topic}.", source="notes")
-                elif self.brain is None:
-                    titles = ", ".join(t for t, _ in matched)
-                    res = Result(f"Your notes on that: {titles}.", source="notes",
-                                 sources=[t for t, _ in matched])
-                elif self._is_cloud_brain() and not config.CLOUD_SHARES_NOTES:
-                    titles = ", ".join(t for t, _ in matched)
-                    res = Result(
-                        f"Your notes on that: {titles}. Cloud note sharing is off, so I didn't "
-                        "send them to the cloud — say 'go local' to summarize them.",
-                        source="notes",
-                        sources=[t for t, _ in matched],
-                        brain="local",
-                    )
-                else:
-                    try:
-                        calls, reply = self.brain.decide(
-                            clean(raw, keep_case=True), self._prompt_facts(text), notes=matched
-                        )
-                    except Exception as e:
-                        res = Result(self._brain_error_reply(e), source="none")
-                    else:
-                        reply_text = reply or "Sorry, I'm not sure how to help with that."
-                        self.brain.remember(text, reply_text)
-                        res = Result(reply_text, calls, source="notes",
-                                     sources=[t for t, _ in matched])
-            elif (m := _TIER3_AGENT.match(text)) and self.brain is not None:
-                goal = m.group(1).strip()
-                matched = self._prompt_notes(goal)
-                note_sources = [t for t, _ in matched]
-                try:
-                    h_res = self.harness.run(
-                        self.brain,
-                        goal,
-                        facts=self._prompt_facts(goal),
-                        notes=matched,
-                    )
-                except Exception as e:
-                    res = Result(
-                        self._brain_error_reply(e),
-                        source="none",
-                        confidence=0.0,
-                    )
-                else:
-                    blocked = cloud_blocked_tools() if self._is_cloud_brain() else set()
-                    if not any(n in blocked for n, _, _ in h_res.observations):
-                        self.brain.remember(text, h_res.reply)
-                    res = Result(
-                        h_res.reply,
-                        h_res.calls,
-                        source="agent",
-                        sources=note_sources,
-                        steps=h_res.steps,
-                        observations=h_res.observations,
-                        confidence=h_res.confidence,
-                    )
-            else:
-                parsed = self.fast_parse(text, clean(raw, keep_case=True))
-                if isinstance(parsed, str):
-                    res = Result(parsed, source="fast")
-                elif parsed:
-                    res = Result(self.run_calls(parsed), parsed, "fast")
-                else:
-                    res = None
+            res = self._special_route(raw, text)
         except Exception as e:
             res = Result(f"Something went wrong ({e.__class__.__name__}). I'm still here.",
                          source="error")
+        if res is None:
+            res = self._model_turn(raw, text)
+        self._finish(raw, text, res, start)
+        return res
 
-        if res is not None:
-            pass
-        elif self.brain is None:
-            res = Result("I didn't catch that, and the model is offline.", source="none")
-        else:
-            matched = self._prompt_notes(text)
-            self._maybe_auto_switch(text, has_notes=bool(matched))
-            try:
-                calls, reply = self.brain.decide(
-                    clean(raw, keep_case=True), self._prompt_facts(text), notes=matched
-                )
-            except Exception as e:  # Ollama not running, model missing, etc.
-                res = Result(self._brain_error_reply(e), source="none")
+    def _special_route(self, raw: str, text: str) -> Result | None:
+        """Pending offers, notes questions, agent goals and the fast path. None means ask the model."""
+        # A pending "want me to remember that?" is answered by the very next command only.
+        if self.toolbox.pending_offer is not None:
+            if _KEEP.match(text) or _SKIP.match(text):
+                return Result(self.toolbox.answer_offer(keep=bool(_KEEP.match(text))), source="fast")
+            self.toolbox.pending_offer = None
+        if _RECENT_NOTES_Q.match(text):
+            return self._notes_turn(raw, text, self.notes_for(text, min_score=1), recent=True)
+        if m := _NOTES_Q.match(text):
+            topic = m.group(1)
+            return self._notes_turn(raw, text, self.notes_for(topic, min_score=1), topic=topic)
+        if (m := _TIER3_AGENT.match(text)) and self.brain is not None:
+            return self._agent_turn(text, m.group(1).strip())
+        parsed = self.fast_parse(text, clean(raw, keep_case=True))
+        if isinstance(parsed, str):
+            return Result(parsed, source="fast")
+        if parsed:
+            return Result(self.run_calls(parsed), parsed, "fast")
+        return None
+
+    def _notes_turn(self, raw: str, text: str, matched: list[tuple[str, str]],
+                    recent: bool = False, topic: str = "") -> Result:
+        """Answer "what do my notes say about X" (topic) or "what's my latest note" (recent)."""
+        if not matched:
+            return Result("You don't have any notes in your vault yet." if recent
+                          else f"Your notes don't mention {topic}.", source="notes")
+        sources = [t for t, _ in matched]
+        titles = ", ".join(sources)
+        listing = (f"Your most recent note is {matched[0][0]} (recent: {titles})." if recent
+                   else f"Your notes on that: {titles}.")
+        if self.brain is None:
+            return Result(listing, source="notes", sources=sources)
+        if self._is_cloud_brain() and not config.CLOUD_SHARES_NOTES:
+            why = ("Cloud note sharing is off, so I answered locally" if recent
+                   else "Cloud note sharing is off, so I didn't send them to the cloud")
+            return Result(f"{listing} {why} — say 'go local' to summarize them.",
+                          source="notes", sources=sources, brain="local")
+        cased = clean(raw, keep_case=True)
+        try:
+            calls, reply = self.brain.decide(cased, self._prompt_facts(text), notes=matched)
+        except Exception as e:
+            return Result(self._brain_error_reply(e), source="none")
+        if not recent:
+            reply_text = reply or _UNSURE
+            self.brain.remember(text, reply_text)
+            return Result(reply_text, calls, source="notes", sources=sources)
+        hit_private = any(n in self._blocked_tools() for n, _ in calls)
+        if not reply and calls and hasattr(self.brain, "synthesize"):
+            obs = [(n, a, self.toolbox.run(n, a)) for n, a in calls]
+            if hit_private:
+                reply = " ".join(filter(None, (out for _, _, out in obs)))
             else:
-                remember_turn = True
-                note_sources = [t for t, _ in matched] if reply else []
-                if calls and all(n == "offer_to_remember" for n, _ in calls):
-                    # answer the question, then ask about keeping the fact
-                    offer = self.run_calls(calls)
-                    res = Result(" ".join(filter(None, [reply, offer])) or
-                                 "Sorry, I'm not sure how to help with that.", calls, "chat",
-                                 sources=note_sources)
-                elif calls:
-                    real = [c for c in calls if c[0] != "offer_to_remember"]
-                    if real and self._is_spurious_action(text, real):
-                        if reply:
-                            reply_text = reply
-                        else:
-                            reply_text = ACK_REPLIES[self._ack_idx % len(ACK_REPLIES)]
-                            self._ack_idx += 1
-                        res = Result(reply_text, [], source="chat", sources=note_sources)
-                    elif (
-                        real
-                        and any(name in OBSERVATION_TOOLS for name, _ in real)
-                        and hasattr(self.brain, "synthesize")
-                    ):
-                        observations = [
-                            (name, args, self.toolbox.run(name, args)) for name, args in real
-                        ]
-                        fallback_text = " ".join(filter(None, (out for _, _, out in observations)))
-                        blocked = cloud_blocked_tools() if self._is_cloud_brain() else set()
-                        if any(name in blocked for name, _ in real):
-                            remember_turn = False
-                            res = Result(
-                                fallback_text, real, source="llm",
-                                steps=1, observations=observations,
-                            )
-                        else:
-                            try:
-                                synth = self.brain.synthesize(
-                                    clean(raw, keep_case=True), observations
-                                ).strip()
-                            except Exception:
-                                synth = ""
-                            if synth:
-                                res = Result(
-                                    synth, real, source="agent", sources=note_sources,
-                                    steps=2, observations=observations,
-                                )
-                            else:
-                                res = Result(
-                                    fallback_text, real, source="llm",
-                                    steps=1, observations=observations,
-                                )
-                    else:
-                        res = Result(self.run_calls(real), real, "llm")
-                        blocked = cloud_blocked_tools() if self._is_cloud_brain() else set()
-                        if any(name in blocked for name, _ in real):
-                            remember_turn = False
-                else:
-                    res = Result(reply or "Sorry, I'm not sure how to help with that.",
-                                 source="chat", sources=note_sources)
-                if remember_turn:
-                    self.brain.remember(text, res.reply)
+                try:
+                    reply = self.brain.synthesize(cased, obs).strip()
+                except Exception:
+                    reply = ""
+        reply_text = reply or f"The most recent note in your vault is {matched[0][0]}."
+        if not hit_private:
+            self.brain.remember(text, reply_text)
+        return Result(reply_text, calls, source="notes", sources=sources)
 
+    def _agent_turn(self, text: str, goal: str) -> Result:
+        """Tier 3: a bounded multi-step tool loop for `agent:` / `research:` / `deep:` goals."""
+        matched = self._prompt_notes(goal)
+        try:
+            h_res = self.harness.run(self.brain, goal, facts=self._prompt_facts(goal), notes=matched)
+        except Exception as e:
+            return Result(self._brain_error_reply(e), source="none", confidence=0.0)
+        if not any(n in self._blocked_tools() for n, _, _ in h_res.observations):
+            self.brain.remember(text, h_res.reply)
+        return Result(h_res.reply, h_res.calls, source="agent", sources=[t for t, _ in matched],
+                      steps=h_res.steps, observations=h_res.observations, confidence=h_res.confidence)
+
+    def _model_turn(self, raw: str, text: str) -> Result:
+        """Anything the fast path couldn't handle: the model picks tools or answers in chat."""
+        if self.brain is None:
+            return Result("I didn't catch that, and the model is offline.", source="none")
+        matched = self._prompt_notes(text)
+        self._maybe_auto_switch(text, has_notes=bool(matched))
+        cased = clean(raw, keep_case=True)
+        try:
+            calls, reply = self.brain.decide(cased, self._prompt_facts(text), notes=matched)
+        except Exception as e:  # Ollama not running, model missing, cloud unreachable, etc.
+            return Result(self._brain_error_reply(e), source="none")
+        note_sources = [t for t, _ in matched] if reply else []
+        res = self._act_on_decision(text, cased, calls, reply, note_sources)
+        # A turn that ran a private tool on a cloud brain stays out of that brain's history.
+        if not any(name in self._blocked_tools() for name, _ in res.calls):
+            self.brain.remember(text, res.reply)
+        return res
+
+    def _act_on_decision(self, text: str, cased: str, calls: list[tuple[str, dict]], reply: str,
+                         note_sources: list[str]) -> Result:
+        if not calls:
+            return Result(reply or _UNSURE, source="chat", sources=note_sources)
+        if all(n == "offer_to_remember" for n, _ in calls):
+            # answer the question, then ask about keeping the fact
+            offer = self.run_calls(calls)
+            return Result(" ".join(filter(None, [reply, offer])) or _UNSURE, calls, "chat",
+                          sources=note_sources)
+        real = [c for c in calls if c[0] != "offer_to_remember"]
+        if self._is_spurious_action(text, real):
+            return Result(reply or self._next_ack(), [], source="chat", sources=note_sources)
+        if any(name in OBSERVATION_TOOLS for name, _ in real) and hasattr(self.brain, "synthesize"):
+            return self._observe_and_synthesize(cased, real, note_sources)
+        return Result(self.run_calls(real), real, "llm")
+
+    def _observe_and_synthesize(self, cased: str, real: list[tuple[str, dict]],
+                                note_sources: list[str]) -> Result:
+        """Run read-only tools, then let the brain phrase the answer from their output."""
+        observations = [(name, args, self.toolbox.run(name, args)) for name, args in real]
+        raw_output = Result(" ".join(filter(None, (out for _, _, out in observations))), real,
+                            source="llm", steps=1, observations=observations)
+        if any(name in self._blocked_tools() for name, _ in real):
+            return raw_output
+        try:
+            synth = self.brain.synthesize(cased, observations).strip()
+        except Exception:
+            synth = ""
+        if not synth:
+            return raw_output
+        return Result(synth, real, source="agent", sources=note_sources, steps=2,
+                      observations=observations)
+
+    def _finish(self, raw: str, text: str, res: Result, start: float) -> None:
+        """Stamp timing and confidence, record the trace and tell the HUD the turn is over."""
         res.ms = (time.perf_counter() - start) * 1000
         if res.source == "none":
             res.confidence = 0.0
@@ -774,7 +549,6 @@ class Router:
             steps=res.steps,
             confidence=res.confidence,
         )
-        return res
 
     def _record_trace(self, raw: str, clean_text: str, res: Result) -> None:
         mem = self.toolbox.memory

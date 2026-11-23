@@ -14,7 +14,8 @@ from unittest.mock import patch  # noqa: E402
 
 from app import config  # noqa: E402
 from app.brain.remote import RemoteBrain, cloud_blocked_tools  # noqa: E402
-from app.brain.router import INTERNET_HONESTY_TEXT, LOCAL_HONESTY_TEXT, Router  # noqa: E402
+from app.brain.router import Router  # noqa: E402
+from app.brain.switching import INTERNET_HONESTY_TEXT, LOCAL_HONESTY_TEXT  # noqa: E402
 from app.events import BUS  # noqa: E402
 from app.memory.notes import NotesIndex  # noqa: E402
 from app.memory.store import Memory  # noqa: E402

@@ -34,7 +34,7 @@
 Done: server LAN/token hardening (`c4746cb`), skill outputs off the vault (`9eb2203`), cloud privacy gating + truthful cloud status (`06a27ca`), eval failure gating + real Tier 3 cases (`599ee45`).
 
 Open, roughly in priority order:
-- [ ] **5.1** Router split, no behaviour change: brain/voice switching into `app/brain/switching.py`; one shared `_model_turn()` for the three near-duplicate decide → synthesize → remember paths in `handle()`. `tests/test_router.py` is the safety net.
+- [x] **5.1** Router split, no behaviour change (done 2026-11-22): brain/voice switching into `app/brain/switching.py`; one shared `_model_turn()` for the three near-duplicate decide → synthesize → remember paths in `handle()`. `tests/test_router.py` is the safety net.
 - [ ] **5.2** Tier 3 stops after the first tool (post-#2 eval: 3/6). On step 2 the model replies instead of calling the second tool ("time and my exam" → only `get_time`). Try a step-1 plan of the sub-questions, or restate the unanswered parts on step 2+. Measure before/after in the same sitting.
 - [ ] **5.3** T2 misses in the local eval: "capital of Ghana" → `web_search` instead of a chat answer; "when is my exam again?" and "which apps did you open today?" get a chat reply instead of `recall` / `recent_activity`; the dentist case gets no `offer_to_remember`. Prompt or fast-path work; do it after 5.1 so it doesn't collide with the split.
 - [ ] **5.4** Silent failures: `_maybe_auto_switch` and `_record_trace` in `router.py` swallow every exception. Emit a BUS event (and log under `-v`) so the HUD can show failed auto-switches.
