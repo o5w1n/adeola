@@ -349,6 +349,77 @@ class RemoteBrainTests(unittest.TestCase):
         self.assertNotIn("9876", captured[-1])
         self.assertIn("forget", cloud_blocked_tools())
 
+    def test_cloud_projects_stay_local_by_default_and_share_when_opted_in(self):
+        mem = Memory(":memory:")
+        self.addCleanup(mem.close)
+        captured = []
+
+        def fake_post(_url, _headers, payload, timeout=30.0):
+            captured.append("\n".join(m["content"] for m in payload["messages"]))
+            user_text = payload["messages"][-1]["content"].lower()
+            if "coding repos" in user_text:
+                content = json.dumps({"actions": [{"tool": "list_projects", "argument": ""}], "reply": ""})
+            elif "typo repo" in user_text:
+                content = json.dumps({"actions": [{"tool": "open_project", "argument": "typo"}], "reply": ""})
+            else:
+                content = json.dumps({"actions": [], "reply": "Cloud answer."})
+            return {"choices": [{"message": {"content": content}, "finish_reason": "stop"}], "usage": {}}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "SecretClientApp").mkdir()
+            projects = Projects(mem, roots=[Path(tmp)])
+            router = Router(Toolbox(AppIndex(), mem, projects), _FakeLocalBrain())
+            rb = RemoteBrain(SCHEMAS, provider_name="gemini", api_key="k", requester=fake_post)
+            router.brain = rb
+
+            with (
+                patch.object(config, "CLOUD_SHARES_MEMORY", False),
+                patch.object(config, "CLOUD_SHARES_NOTES", False),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                blocked = cloud_blocked_tools()
+                self.assertIn("list_projects", blocked)
+                self.assertIn("open_project", blocked)
+
+                rb.decide("check", observations=[("list_projects", {}, "Your projects: SecretClientApp.")])
+                self.assertNotIn("SecretClientApp", captured[-1])
+
+                calls_before = len(captured)
+                self.assertEqual(
+                    rb.synthesize("projects?", [("list_projects", {}, "Your projects: SecretClientApp.")]),
+                    "",
+                )
+                self.assertEqual(len(captured), calls_before)
+
+                rb.history.clear()
+                calls_before = len(captured)
+                res_list = router.handle("what coding repos are on my pc")
+                self.assertEqual(len(captured), calls_before + 1)
+                self.assertIn("SecretClientApp", res_list.reply)
+                self.assertEqual(rb.history, [])
+                router.handle("tell me a joke")
+                self.assertNotIn("SecretClientApp", captured[-1])
+
+                rb.history.clear()
+                res_miss = router.handle("please open my typo repo")
+                self.assertIn("SecretClientApp", res_miss.reply)
+                self.assertEqual(rb.history, [])
+                router.handle("tell me a joke")
+                self.assertNotIn("SecretClientApp", captured[-1])
+
+            with patch.object(config, "CLOUD_SHARES_MEMORY", True):
+                blocked = cloud_blocked_tools()
+                self.assertNotIn("list_projects", blocked)
+                self.assertNotIn("open_project", blocked)
+
+                calls_before = len(captured)
+                self.assertEqual(
+                    rb.synthesize("projects?", [("list_projects", {}, "Your projects: SecretClientApp.")]),
+                    "Cloud answer.",
+                )
+                self.assertEqual(len(captured), calls_before + 1)
+                self.assertIn("SecretClientApp", captured[-1])
+
     def test_hud_has_cloud_indicator_and_telemetry_fixes(self):
         hud_path = Path(__file__).resolve().parents[1] / "app" / "ui" / "hud.html"
         html = hud_path.read_text(encoding="utf-8")

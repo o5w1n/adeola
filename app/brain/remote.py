@@ -18,6 +18,7 @@ from app.brain.model import BASE_PROMPT, _tool_lines, format_observations
 
 NOTE_TOOLS = {"search_notes"}
 MEMORY_TOOLS = {"recall", "recent_activity", "forget"}   # forget's reply echoes the stored fact
+PROJECT_TOOLS = {"list_projects", "open_project"}        # replies can list local project folder names
 
 
 def cloud_blocked_tools() -> set[str]:
@@ -26,7 +27,7 @@ def cloud_blocked_tools() -> set[str]:
     if not config.CLOUD_SHARES_NOTES:
         blocked |= NOTE_TOOLS
     if not config.CLOUD_SHARES_MEMORY:
-        blocked |= MEMORY_TOOLS
+        blocked |= MEMORY_TOOLS | PROJECT_TOOLS
     return blocked
 
 

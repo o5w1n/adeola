@@ -170,10 +170,11 @@ she stays local and tells you which variable is missing.
 **What a cloud brain sees.** By default, only your current question and your recent turns with that
 cloud brain. Your
 saved memory, your vault notes, and the output of private tools (`recall`, `recent_activity`,
-`forget`, `search_notes`) stay on this PC. When one of those tools runs, she answers from its output
-locally instead of sending it to the cloud. To share more, set either of these before starting:
+`forget`, `list_projects`, `open_project`, `search_notes`) stay on this PC. When one of those tools
+runs, she answers from its output locally instead of sending it to the cloud. To share more, set
+either of these before starting:
 
-- `ADEOLA_CLOUD_SHARES_MEMORY=1`: remembered facts and memory tool output
+- `ADEOLA_CLOUD_SHARES_MEMORY=1`: remembered facts, project names, and memory/project tool output
 - `ADEOLA_CLOUD_SHARES_NOTES=1`: vault excerpts and note search output
 
 While a cloud brain is active, the HUD shows a `CLOUD · <PROVIDER>` badge, and `are you local` /

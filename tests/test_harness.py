@@ -178,3 +178,30 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(res.steps, 1)
         self.assertIn("Friday", res.reply)
 
+    def test_harness_stops_before_sending_project_list_to_cloud(self):
+        import json
+        import tempfile
+        from pathlib import Path
+
+        mem = Memory(":memory:")
+        self.addCleanup(mem.close)
+        captured = []
+
+        def fake_post(_url, _headers, payload, timeout=30.0):
+            captured.append(payload["messages"])
+            content = json.dumps({"actions": [{"tool": "list_projects", "argument": ""}], "reply": ""})
+            return {
+                "choices": [{"message": {"content": content}, "finish_reason": "stop"}],
+                "usage": {},
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "SecretClientApp").mkdir()
+            tb = Toolbox(AppIndex(), mem, Projects(mem, roots=[Path(tmp)]))
+            rb = RemoteBrain(SCHEMAS, provider_name="gemini", api_key="k", requester=fake_post)
+            with patch.object(config, "CLOUD_SHARES_MEMORY", False):
+                res = AgentHarness(tb, max_steps=4).run(rb, "what projects do I have")
+        self.assertEqual(len(captured), 1)
+        self.assertEqual(res.steps, 1)
+        self.assertIn("SecretClientApp", res.reply)
+
