@@ -10,12 +10,15 @@ from unittest import mock
 
 os.environ.setdefault("ADEOLA_DRY_RUN", "1")
 
+from app import config  # noqa: E402
 from app.memory.notes import NotesIndex  # noqa: E402
 from tools.preflight import (  # noqa: E402
     LOOP_MIN,
     LOOP_SENTENCE,
+    SWAP_WARN_SECONDS,
     Check,
     budget_line,
+    check_brain_swap,
     check_notes,
     loop_match,
     main,
@@ -140,6 +143,68 @@ class PreflightTests(unittest.TestCase):
             idx.search = lambda *a, **kw: []
             with self.assertRaises(AssertionError):
                 check_notes(idx)
+
+    def test_brain_swap_skips_when_auto_brain_disabled(self):
+        brain = mock.Mock()
+        with mock.patch.object(config, "AUTO_BRAIN", False):
+            c = run_check("Brain swap", lambda: check_brain_swap(brain, ["qwen3:4b"]), warn_only=True)
+        self.assertEqual(c.status, "PASS")
+        self.assertIn("auto-brain off", c.detail)
+        brain.switch_model.assert_not_called()
+
+    def test_brain_swap_warns_when_coder_model_not_pulled(self):
+        brain = mock.Mock()
+        with mock.patch.object(config, "AUTO_BRAIN", True):
+            c = run_check("Brain swap", lambda: check_brain_swap(brain, ["qwen3:4b"]), warn_only=True)
+        self.assertEqual(c.status, "WARN")
+        self.assertIn("not pulled", c.detail)
+        self.assertIn("AUTO_BRAIN = False", c.detail)
+        brain.switch_model.assert_not_called()
+
+    def test_brain_swap_times_fast_and_slow_round_trip(self):
+        coder = config.BRAINS["coder"]
+        installed = [config.MODEL, coder]
+
+        # Fast swap (1.2 s + 1.5 s) -> PASS
+        fast_brain = mock.Mock()
+        fast_brain.switch_model.return_value = (True, "Switched")
+        fast_ticks = iter([0.0, 1.2, 1.2, 2.7])
+        with mock.patch.object(config, "AUTO_BRAIN", True):
+            c_fast = run_check(
+                "Brain swap",
+                lambda: check_brain_swap(fast_brain, installed, warn_seconds=4.0, clock=lambda: next(fast_ticks)),
+                warn_only=True,
+            )
+        self.assertEqual(c_fast.status, "PASS")
+        self.assertIn("smart→coder 1.20 s", c_fast.detail)
+        self.assertIn("coder→smart 1.50 s", c_fast.detail)
+        self.assertAlmostEqual(c_fast.seconds, 2.7)
+        self.assertEqual(
+            [call.args[0] for call in fast_brain.switch_model.call_args_list],
+            ["coder", "smart"],
+        )
+
+        # Slow swap (5.5 s + 2.0 s > SWAP_WARN_SECONDS) -> WARN
+        slow_brain = mock.Mock()
+        slow_brain.switch_model.return_value = (True, "Switched")
+        slow_ticks = iter([0.0, SWAP_WARN_SECONDS + 1.5, SWAP_WARN_SECONDS + 1.5, SWAP_WARN_SECONDS + 3.5])
+        with mock.patch.object(config, "AUTO_BRAIN", True):
+            c_slow = run_check(
+                "Brain swap",
+                lambda: check_brain_swap(slow_brain, installed, clock=lambda: next(slow_ticks)),
+                warn_only=True,
+            )
+        self.assertEqual(c_slow.status, "WARN")
+        self.assertIn("AUTO_BRAIN = False", c_slow.detail)
+
+    def test_brain_swap_warns_when_switch_fails(self):
+        coder = config.BRAINS["coder"]
+        brain = mock.Mock()
+        brain.switch_model.return_value = (False, "OOM")
+        with mock.patch.object(config, "AUTO_BRAIN", True):
+            c = run_check("Brain swap", lambda: check_brain_swap(brain, [config.MODEL, coder]), warn_only=True)
+        self.assertEqual(c.status, "WARN")
+        self.assertIn("OOM", c.detail)
 
 
 if __name__ == "__main__":

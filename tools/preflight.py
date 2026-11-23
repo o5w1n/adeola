@@ -25,6 +25,7 @@ from app.tools.registry import SCHEMAS
 
 LOOP_SENTENCE = "Good afternoon. The local voice is live."
 LOOP_MIN = 85
+SWAP_WARN_SECONDS = 4.0
 
 _MARKS = {"PASS": "✓", "FAIL": "✗", "WARN": "!"}
 
@@ -117,6 +118,63 @@ def _model_names(resp) -> list[str]:
     return names
 
 
+def _has_model(names: list[str], target: str) -> bool:
+    return any(
+        n == target or n == f"{target}:latest" or (":" not in target and n.startswith(f"{target}:"))
+        for n in names
+    )
+
+
+def check_brain_swap(
+    brain,
+    installed_models: list[str],
+    warn_seconds: float = SWAP_WARN_SECONDS,
+    clock: Callable[[], float] = time.perf_counter,
+) -> tuple[str, float]:
+    """Time a smart -> coder -> smart swap when AUTO_BRAIN is enabled."""
+    if not config.AUTO_BRAIN:
+        return "auto-brain off (skipped)", 0.0
+    smart_tag = config.BRAINS.get("smart", config.MODEL)
+    coder_tag = config.BRAINS.get("coder", "")
+    if not coder_tag or coder_tag == smart_tag:
+        return "single local model configured (skipped)", 0.0
+    if not _has_model(installed_models, coder_tag):
+        raise RuntimeError(
+            f"{coder_tag} not pulled — AUTO_BRAIN will fail on coding queries "
+            f"(run `ollama pull {coder_tag}` or set AUTO_BRAIN = False)"
+        )
+
+    dt_to_coder = 0.0
+    dt_to_smart = 0.0
+    swapped = False
+    try:
+        t0 = clock()
+        ok, msg = brain.switch_model("coder")
+        dt_to_coder = clock() - t0
+        if not ok:
+            raise RuntimeError(f"smart→coder failed: {msg}")
+        swapped = True
+
+        t1 = clock()
+        ok, msg = brain.switch_model("smart")
+        dt_to_smart = clock() - t1
+        if not ok:
+            raise RuntimeError(f"coder→smart failed: {msg}")
+        swapped = False
+    finally:
+        if swapped:
+            try:
+                brain.switch_model("smart")
+            except Exception:
+                pass
+
+    total = dt_to_coder + dt_to_smart
+    detail = f"smart→coder {dt_to_coder:.2f} s, coder→smart {dt_to_smart:.2f} s"
+    if dt_to_coder > warn_seconds or dt_to_smart > warn_seconds:
+        raise RuntimeError(f"{detail} (> {warn_seconds:.1f} s; consider AUTO_BRAIN = False)")
+    return detail, total
+
+
 def check_notes(index: NotesIndex | None = None) -> str:
     """Verify the notes index loads and can retrieve a note by title."""
     if index is None:
@@ -151,19 +209,17 @@ def main() -> int:
         return c
 
     # 1. Ollama + model
+    installed_models: list[str] = []
+
     def check_ollama() -> str:
+        nonlocal installed_models
         hint = f"Start Ollama, then: ollama pull {config.MODEL}"
         try:
             resp = ollama.Client().list()
         except Exception as e:
             raise RuntimeError(f"{hint} ({e})") from e
-        names = _model_names(resp)
-        target = config.MODEL
-        matched = any(
-            n == target or n == f"{target}:latest" or (":" not in target and n.startswith(f"{target}:"))
-            for n in names
-        )
-        if not matched:
+        installed_models = _model_names(resp)
+        if not _has_model(installed_models, config.MODEL):
             raise RuntimeError(hint)
         return f"{config.MODEL} ready"
 
@@ -203,6 +259,15 @@ def main() -> int:
         c_think = record(run_check("Brain, chat", check_chat))
         if c_think.status == "PASS":
             think = c_think.seconds
+
+        # 3b. Brain swap (smart <-> coder, warn_only)
+        record(
+            run_check(
+                "Brain swap",
+                lambda: check_brain_swap(brain, installed_models),
+                warn_only=True,
+            )
+        )
 
         # 4. Voice (= speak, warn_only)
         def check_voice() -> tuple[str, float]:
