@@ -30,7 +30,7 @@ HELP_TEXT = ("I can open apps, websites and your projects, control music and vol
 
 _POLITE = re.compile(r"^(?:(?:please|can you|could you|would you|hey)\s+)+|\s+(?:please|for me|now)$",
                      re.IGNORECASE)
-_OPEN = re.compile(r"^(?:open|launch|start|run|fire up|bring up|pull up|switch to|go to)\s+(.+)$")
+_OPEN = re.compile(r"^(?:open|launch|start|run|fire up|bring up|pull up|switch to|go to|take me to)\s+(.+)$")
 _OPEN_INVERTED = re.compile(
     r"^([\w]+)\s+(?:open|launch|switch to|go to)\s+(?:your\s+|my\s+|the\s+)?(.+)$"
 )
@@ -64,13 +64,17 @@ ACK_REPLIES = (
 )
 _ACTION_HINTS = {
     "open", "launch", "start", "run", "fire", "bring", "pull", "switch", "go",
-    "play", "pause", "resume", "stop", "skip", "next", "previous", "volume",
-    "mute", "unmute", "louder", "quieter", "search", "google", "look", "find",
-    "time", "date", "day", "lock", "remember", "note", "save", "log", "forget",
-    "recall", "project", "projects", "work", "write", "code", "coding", "browse",
-    "browser", "internet", "web", "music", "song", "listen", "watch", "video",
-    "terminal", "command", "files", "folder", "notes", "calculator", "calc",
-    "settings", "notepad", "brave", "spotify", "chrome", "studio",
+    "show", "check", "take", "play", "pause", "resume", "stop", "skip", "next",
+    "previous", "volume", "mute", "unmute", "louder", "quieter", "search",
+    "google", "look", "find", "time", "date", "day", "lock", "secure",
+    "computer", "pc", "laptop", "screen", "display", "wifi", "bluetooth",
+    "sound", "cpu", "memory", "ram", "disk", "process", "processes",
+    "remember", "note", "save", "log", "forget", "recall", "project",
+    "projects", "work", "write", "code", "coding", "browse", "browser",
+    "internet", "web", "site", "website", "app", "apps", "music", "song",
+    "listen", "watch", "video", "youtube", "terminal", "command", "files",
+    "folder", "notes", "calculator", "calc", "settings", "notepad", "brave",
+    "spotify", "chrome", "studio",
 }
 _DESKTOP_ACTION_TOOLS = {"open_app", "open_url", "open_project", "lock_pc", "web_search"}
 _HONESTY_LOCAL = re.compile(
@@ -89,6 +93,13 @@ _ADD_PROJECT = re.compile(r"^(?:add|save|remember) (?:my |a |the )?project (.+?)
 _REMEMBER = re.compile(
     r"^(?:remember|note to self|make a note|save a note|note|log this|log|jot down|"
     r"keep in mind|don't (?:let me )?forget)(?:(?:\s+that)?\s*:|\s+that)?[\s,]+(.+)$",
+    re.IGNORECASE,
+)
+# "X, keep that in mind" / "X, don't let me forget". Not "X, remember that": "do you remember that"
+# and "I can't remember that" are questions and negations, not requests to save X.
+_REMEMBER_TRAILING = re.compile(
+    r"^(?!(?:do|did|does|can|could|will|would|should|are|have)\s+you\b|i\s+(?:can't|cannot|don't|didn't)\b)"
+    r"(.+?)[,\s]+(?:keep (?:that|this) in mind|don't (?:let me )?forget(?: (?:that|it))?)$",
     re.IGNORECASE,
 )
 _RECALL = re.compile(r"^(?:what do you (?:remember|know)(?: about)?|what did i (?:tell you|say)(?: about)?|"
@@ -239,6 +250,8 @@ class Router(BrainSwitching):
             return self._add_project(m.group(1), m.group(2))
         if m := _REMEMBER.match(cased):
             return [("remember", {"note": m.group(1)})]
+        if m := _REMEMBER_TRAILING.match(cased):
+            return [("remember", {"note": m.group(1).strip(" ,")})]
         if m := _RECALL.match(text):
             return [("recall", {"query": (m.group(1) or "").removeprefix("my ")})]
         if _WORKING_ON.match(text):

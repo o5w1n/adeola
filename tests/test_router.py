@@ -504,6 +504,44 @@ class ModelPathTests(unittest.TestCase):
         self.assertEqual(res_music.calls, [("open_app", {"name": "Spotify"})])
         self.assertEqual(res_music.reply, "Opening Spotify.")
 
+        # 4. System/security intents are not misclassified as spurious banter
+        lock_router = Router(Toolbox(FAKE_APPS), FakeBrain([("lock_pc", {})]))
+        res_lock = run(lock_router, "I'm stepping away, secure my computer")
+        self.assertEqual(res_lock.source, "llm")
+        self.assertEqual(res_lock.calls, [("lock_pc", {})])
+
+        cpu_router = Router(Toolbox(FAKE_APPS), FakeBrain([("open_app", {"name": "Task Manager"})]))
+        res_cpu = run(cpu_router, "show me what's using my CPU")
+        self.assertEqual(res_cpu.source, "llm")
+        self.assertEqual(res_cpu.calls, [("open_app", {"name": "Task Manager"})])
+
+    def test_take_me_to_and_trailing_remember_fast_paths(self):
+        router = Router(Toolbox(FAKE_APPS), FakeBrain())
+        res_yt = run(router, "take me to youtube")
+        self.assertEqual(res_yt.source, "fast")
+        self.assertIn("youtube", res_yt.reply.lower())
+
+        res_gh = run(router, "take me to github.com")
+        self.assertEqual(res_gh.source, "fast")
+        self.assertEqual(res_gh.calls, [("open_url", {"url": "github.com"})])
+
+        res_rem = run(router, "I'm working on Quail this week, keep that in mind")
+        self.assertEqual(res_rem.source, "fast")
+        self.assertEqual(res_rem.calls, [("remember", {"note": "I'm working on Quail this week"})])
+
+        res_rem2 = run(router, "my flight is at 6, don't let me forget")
+        self.assertEqual(res_rem2.source, "fast")
+        self.assertEqual(res_rem2.calls, [("remember", {"note": "my flight is at 6"})])
+
+    def test_trailing_remember_does_not_swallow_questions_or_negations(self):
+        router = Router(Toolbox(FAKE_APPS), FakeBrain())
+        for text in ("do you remember that", "do you remember this", "do you remember that?"):
+            parsed = router.fast_parse(clean(text), clean(text, keep_case=True))
+            self.assertEqual(parsed[0][0], "recall", text)
+        for text in ("I can't remember that", "I don't remember this", "do you keep that in mind"):
+            parsed = router.fast_parse(clean(text), clean(text, keep_case=True))
+            self.assertFalse(isinstance(parsed, list) and parsed and parsed[0][0] == "remember", text)
+
 
 class LaunchDetachedTests(unittest.TestCase):
     def test_clean_launch_env_strips_vscode_and_electron_vars(self):
