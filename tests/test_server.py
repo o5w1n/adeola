@@ -168,6 +168,26 @@ class ServerApiTests(unittest.TestCase):
         status, _ = self._json_call(server, "GET", "/api/status", client_ip="::1")
         self.assertEqual(status, 200)
 
+    def test_proxied_loopback_requests_need_the_token(self):
+        """`tailscale serve` (or any reverse proxy on this PC) forwards phone requests from 127.0.0.1;
+        they must not inherit loopback's token-free access."""
+        server = AdeolaServer(self.router, token="secret123")
+        for headers in ({"X-Forwarded-For": "100.101.102.103"}, {"Forwarded": "for=100.101.102.103"},
+                        {"X-Real-IP": "100.101.102.103"}, {"Tailscale-User-Login": "me@example.com"}):
+            status, _ = self._json_call(server, "GET", "/api/status", headers=headers)
+            self.assertEqual(status, 401, headers)
+            status, _ = self._json_call(server, "GET", "/api/status?token=secret123", headers=headers)
+            self.assertEqual(status, 200, headers)
+
+    def test_funnel_requests_are_refused_even_with_the_token(self):
+        server = AdeolaServer(self.router, token="secret123")
+        funnel = {"Tailscale-Funnel-Request": "?1", "X-Forwarded-For": "203.0.113.9"}
+        status, _ = self._json_call(server, "GET", "/api/status?token=secret123", headers=funnel)
+        self.assertEqual(status, 403)
+        with patch.object(config, "SERVER_ALLOW_LAN", True):
+            status, _ = self._json_call(server, "GET", "/api/status?token=secret123", headers=funnel)
+            self.assertEqual(status, 200)
+
     def test_remote_peer_without_configured_token_is_refused(self):
         server = AdeolaServer(self.router, token="")
         status, _ = self._json_call(server, "GET", "/api/status", client_ip="100.101.102.103")
@@ -199,6 +219,8 @@ class ServerApiTests(unittest.TestCase):
         self.assertEqual(client_access("::ffff:127.0.0.1"), "loopback")
         self.assertEqual(client_access("100.64.0.1"), "tailscale")
         self.assertEqual(client_access("100.128.0.1"), "lan")
+        self.assertEqual(client_access("fd7a:115c:a1e0::1"), "tailscale")
+        self.assertEqual(client_access("fd00::1"), "lan")
         self.assertEqual(client_access("192.168.1.42"), "lan")
         self.assertEqual(client_access("not-an-ip"), "lan")
 
@@ -234,6 +256,8 @@ class ServerApiTests(unittest.TestCase):
             self.assertEqual("auto brain routing" in tele["insight"]["summary"], enabled)
 
     def test_tailscale_ip_detection(self):
+        from app import server as server_mod
+
         fake_addrs = [
             (2, 1, 6, "", ("192.168.1.42", 0)),
             (2, 1, 6, "", ("100.101.102.103", 0)),
@@ -245,11 +269,35 @@ class ServerApiTests(unittest.TestCase):
             (2, 1, 6, "", ("192.168.1.42", 0)),
             (2, 1, 6, "", ("100.128.0.1", 0)),  # outside 100.64.0.0/10
         ]
-        with patch("app.server.socket.getaddrinfo", return_value=non_ts_addrs):
+        with (
+            patch("app.server.socket.getaddrinfo", return_value=non_ts_addrs),
+            patch("app.server._tailscale_cli_ip", return_value=None),
+        ):
             self.assertIsNone(tailscale_ip())
 
-        with patch("app.server.socket.getaddrinfo", side_effect=OSError("no net")):
+        with (
+            patch("app.server.socket.getaddrinfo", side_effect=OSError("no net")),
+            patch("app.server._tailscale_cli_ip", return_value=None),
+        ):
             self.assertIsNone(tailscale_ip())
+
+        with (
+            patch("app.server.socket.getaddrinfo", return_value=[(2, 1, 6, "", ("192.168.1.42", 0))]),
+            patch("app.server._tailscale_cli_ip", return_value="100.77.88.99"),
+        ):
+            self.assertEqual(tailscale_ip(), "100.77.88.99")
+
+        with (
+            patch("app.server.shutil.which", return_value="tailscale"),
+            patch("app.server.subprocess.run", return_value=NS(returncode=0, stdout="100.77.88.99\n")),
+        ):
+            self.assertEqual(server_mod._tailscale_cli_ip(), "100.77.88.99")
+
+        with (
+            patch("app.server.shutil.which", return_value="tailscale"),
+            patch("app.server.subprocess.run", return_value=NS(returncode=1, stdout="")),
+        ):
+            self.assertIsNone(server_mod._tailscale_cli_ip())
 
     @staticmethod
     def _make_pcm_wav(samples: np.ndarray, rate: int = 16000, channels: int = 1) -> bytes:
@@ -399,6 +447,17 @@ class ServerApiTests(unittest.TestCase):
         out = buf.getvalue()
         self.assertIn("http://127.0.0.1:8765", out)
         self.assertIn("http://100.88.99.11:8765", out)
+        self.assertIn("http://100.88.99.11:8765/hud", out)
+
+        buf_none = io.StringIO()
+        with (
+            patch.object(AdeolaServer, "start"),
+            patch.object(AdeolaServer, "stop"),
+            patch("app.server.tailscale_ip", return_value=None),
+            contextlib.redirect_stdout(buf_none),
+        ):
+            main.start_server(self.router, lock, port=8765).stop()
+        self.assertIn("No Tailscale interface", buf_none.getvalue())
 
     def test_event_bus_and_pipeline_emission(self):
         from app.events import BUS, EventBus
@@ -523,6 +582,55 @@ class ServerApiTests(unittest.TestCase):
         hud_html = raw_hud.decode("utf-8")
         for needle in ('id="last-turn-conf"', "renderConfidence", "d.confidence", "conf-high", "conf-mid", "conf-low"):
             self.assertIn(needle, hud_html)
+
+    def test_companion_and_hud_tailscale_readiness(self):
+        server = AdeolaServer(self.router)
+        _, _, raw_comp = server.dispatch("GET", "/")
+        comp_html = raw_comp.decode("utf-8")
+        for needle in ("history.replaceState", "unauthorized", "navigator.mediaDevices"):
+            self.assertIn(needle, comp_html)
+
+        _, _, raw_hud = server.dispatch("GET", "/hud")
+        self.assertIn("history.replaceState", raw_hud.decode("utf-8"))
+
+        class _NoCloseBytesIO(io.BytesIO):
+            def close(self):
+                pass
+
+        class _FakeSocket:
+            def __init__(self, raw_request: bytes):
+                self._in = io.BytesIO(raw_request)
+                self.out = _NoCloseBytesIO()
+
+            def makefile(self, mode, *_args, **_kwargs):
+                return self._in if "r" in mode else self.out
+
+            def sendall(self, data: bytes):
+                self.out.write(data)
+
+        srv = AdeolaServer(self.router, token="secret123")
+        handler_cls = srv._build_handler()
+
+        def raw_get(path: str, client_ip: str) -> str:
+            sock = _FakeSocket(f"GET {path} HTTP/1.1\r\nHost: test\r\n\r\n".encode("utf-8"))
+            handler_cls(sock, (client_ip, 54321), None)
+            return sock.out.getvalue().decode("utf-8", errors="replace")
+
+        # Tailscale IPv4: /api/events requires token, succeeds with valid token, returns snapshot SSE
+        self.assertTrue(raw_get("/api/events", "100.101.102.103").startswith("HTTP/1.0 401"))
+        sse_resp = raw_get("/api/events?token=secret123", "100.101.102.103")
+        self.assertTrue(sse_resp.startswith("HTTP/1.0 200"))
+        self.assertIn("text/event-stream", sse_resp)
+        self.assertIn('"type": "snapshot"', sse_resp)
+
+        # Tailscale IPv4: PWA root loads without ?token= so saved localStorage token can authenticate API calls
+        self.assertTrue(raw_get("/", "100.101.102.103").startswith("HTTP/1.0 200"))
+
+        # Tailscale IPv6: /api/status succeeds with token
+        self.assertTrue(raw_get("/api/status?token=secret123", "fd7a:115c:a1e0::1").startswith("HTTP/1.0 200"))
+
+        # Non-Tailscale LAN peer: /api/events refused with 403 even with valid token
+        self.assertTrue(raw_get("/api/events?token=secret123", "192.168.1.42").startswith("HTTP/1.0 403"))
 
 
 if __name__ == "__main__":

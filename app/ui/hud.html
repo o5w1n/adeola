@@ -1066,7 +1066,10 @@
     /* ── Auth & API Helpers ──────────────────────────────────────── */
     const params = new URLSearchParams(window.location.search);
     const token = params.get("token") || localStorage.getItem("adeola_token") || "";
-    if (params.get("token")) localStorage.setItem("adeola_token", token);
+    if (params.get("token")) {
+      localStorage.setItem("adeola_token", token);
+      try { history.replaceState(null, "", window.location.pathname); } catch (_) {}
+    }
 
     function apiHeaders() {
       const h = { "Content-Type": "application/json" };

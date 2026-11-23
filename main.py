@@ -124,7 +124,10 @@ def start_server(
     if ts_ip:
         query = f"?token={srv.token}" if srv.token else ""
         print(f"{N}: Tailscale (Android): http://{ts_ip}:{port}/{query}")
+        print(f"{N}: Tailscale HUD:       http://{ts_ip}:{port}/hud{query}")
         print("   (Open that link once on your phone; it remembers the token. Keep it private.)")
+    else:
+        print(f"{N}: No Tailscale interface (100.64.0.0/10) detected; only this PC can connect right now.")
     return srv
 
 

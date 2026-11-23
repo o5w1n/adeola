@@ -241,6 +241,12 @@ python main.py --serve --port 9000  # custom port
 | This PC (`127.0.0.1` / `::1`) | Yes, no token needed. A wrong token is still refused |
 | Tailscale devices (`100.64.0.0/10`) | Only with the token |
 | Anything else (home Wi-Fi, café Wi-Fi, …) | Refused (403), even with the token, unless `ADEOLA_ALLOW_LAN=1` |
+| Through a proxy on this PC, e.g. `tailscale serve` | Only with the token, even though it arrives from `127.0.0.1` |
+| Through `tailscale funnel` (public internet) | Refused (403), even with the token, unless `ADEOLA_ALLOW_LAN=1` |
+
+**Hold to Talk on the phone** needs HTTPS, because browsers only allow the mic on secure pages. Run
+`tailscale serve --bg 8765` on the PC and open the `https://<pc-name>.<tailnet>.ts.net` address it
+prints, adding `?token=...` once. Typing works over plain `http://` without it.
 
 The token is `ADEOLA_TOKEN` if you set it. Otherwise one is generated on first `--serve` and kept in
 `data/server_token`, so the phone's saved copy keeps working. Delete that file to issue a new one;

@@ -9,7 +9,9 @@ import ipaddress
 import json
 import queue
 import secrets
+import shutil
 import socket
+import subprocess
 import threading
 import urllib.parse
 import wave
@@ -28,6 +30,7 @@ _HUD_PATH = Path(__file__).resolve().parent / "ui" / "hud.html"
 _AVATAR_PATH = Path(__file__).resolve().parent.parent / "adeola-v1.avatar.json"
 
 _TAILSCALE_NET = ipaddress.ip_network("100.64.0.0/10")
+_TAILSCALE_NET6 = ipaddress.ip_network("fd7a:115c:a1e0::/48")
 _TOKEN_PATH = config.DATA_DIR / "server_token"
 
 MANIFEST_JSON = {
@@ -194,7 +197,10 @@ COMPANION_HTML = """<!DOCTYPE html>
   <script>
     const params = new URLSearchParams(window.location.search);
     const token = params.get("token") || localStorage.getItem("adeola_token") || "";
-    if (params.get("token")) localStorage.setItem("adeola_token", token);
+    if (params.get("token")) {
+      localStorage.setItem("adeola_token", token);
+      try { history.replaceState(null, "", window.location.pathname); } catch (_) {}
+    }
 
     function apiHeaders() {
       const h = { "Content-Type": "application/json" };
@@ -231,12 +237,25 @@ COMPANION_HTML = """<!DOCTYPE html>
     }
 
     async function refreshStatus() {
+      const badge = document.getElementById("status-badge");
       try {
         const res = await fetch("/api/status", { headers: apiHeaders() });
+        if (res.status === 401) {
+          badge.textContent = "unauthorized";
+          addMessage("bot", "Open the Tailscale ?token=... link printed by Adeola to sign in.");
+          return;
+        }
+        if (res.status === 403) {
+          badge.textContent = "blocked";
+          addMessage("bot", "Connect over Tailscale (100.64.0.0/10) to use Adeola remotely.");
+          return;
+        }
         if (!res.ok) return;
         const d = await res.json();
-        document.getElementById("status-badge").textContent = (d.brain || "local") + " · " + (d.model || "fast");
-      } catch (_) {}
+        badge.textContent = (d.brain || "local") + " · " + (d.model || "fast");
+      } catch (_) {
+        badge.textContent = "offline";
+      }
     }
 
     async function sendText(text) {
@@ -309,6 +328,10 @@ COMPANION_HTML = """<!DOCTYPE html>
     async function startRecording(e) {
       e.preventDefault();
       if ( audioCtx ) return;
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        addMessage("bot", "Hold to Talk needs HTTPS (e.g. 'tailscale serve'); typing works over HTTP.");
+        return;
+      }
       try {
         mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
         audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
@@ -399,12 +422,40 @@ def decode_wav_16k(wav_bytes: bytes) -> np.ndarray:
     return audio.astype(np.float32)
 
 
+def _tailscale_cli_ip() -> str | None:
+    """Fallback to `tailscale ip -4` when Windows socket.getaddrinfo omits the WireGuard tunnel."""
+    exe = shutil.which("tailscale")
+    if not exe:
+        win_default = Path(r"C:\Program Files\Tailscale\tailscale.exe")
+        if win_default.is_file():
+            exe = str(win_default)
+    if not exe:
+        return None
+    try:
+        proc = subprocess.run([exe, "ip", "-4"], capture_output=True, text=True, timeout=2.0, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    for line in (proc.stdout or "").splitlines():
+        ip_str = line.strip()
+        if not ip_str:
+            continue
+        try:
+            ip = ipaddress.ip_address(ip_str)
+            if isinstance(ip, ipaddress.IPv4Address) and ip in _TAILSCALE_NET:
+                return ip_str
+        except ValueError:
+            continue
+    return None
+
+
 def tailscale_ip() -> str | None:
     """Return the first local IPv4 address in the Tailscale CGNAT range (100.64.0.0/10), or None."""
     try:
         infos = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)
     except OSError:
-        return None
+        infos = []
     for info in infos:
         sockaddr = info[4]
         if not sockaddr:
@@ -415,7 +466,7 @@ def tailscale_ip() -> str | None:
                 return ip_str
         except ValueError:
             continue
-    return None
+    return _tailscale_cli_ip()
 
 
 def load_or_create_token(path: Path = _TOKEN_PATH) -> str:
@@ -432,6 +483,20 @@ def load_or_create_token(path: Path = _TOKEN_PATH) -> str:
     return token
 
 
+_PROXY_HEADERS = ("x-forwarded-for", "forwarded", "x-real-ip")
+
+
+def _is_proxied(headers: dict[str, str]) -> bool:
+    """True when a reverse proxy relayed the request, so its 127.0.0.1 source isn't the real client."""
+    names = {k.lower() for k in (headers or {})}
+    return any(h in names for h in _PROXY_HEADERS) or any(n.startswith("tailscale-") for n in names)
+
+
+def _is_funnel(headers: dict[str, str]) -> bool:
+    """Tailscale Funnel marks requests that came from the public internet."""
+    return any(k.lower() == "tailscale-funnel-request" for k in (headers or {}))
+
+
 def client_access(client_ip: str) -> str:
     """Classify a peer as 'loopback', 'tailscale' or 'lan' (anything else)."""
     try:
@@ -443,6 +508,8 @@ def client_access(client_ip: str) -> str:
     if ip.is_loopback:
         return "loopback"
     if isinstance(ip, ipaddress.IPv4Address) and ip in _TAILSCALE_NET:
+        return "tailscale"
+    if isinstance(ip, ipaddress.IPv6Address) and ip in _TAILSCALE_NET6:
         return "tailscale"
     return "lan"
 
@@ -518,6 +585,10 @@ class AdeolaServer:
         the token, and peers outside Tailscale are refused unless ADEOLA_ALLOW_LAN=1."""
         access = client_access(client_ip)
         presented = self._presented_token(headers, query)
+        if access == "loopback" and _is_proxied(headers):
+            # A proxy on this PC (e.g. `tailscale serve`) relays someone else's request from 127.0.0.1.
+            # A public Funnel request is "lan"-like (refused); a tailnet one still needs the token.
+            access = "lan" if _is_funnel(headers) else "tailscale"
         if access == "loopback":
             return 200 if not presented or self._token_matches(presented) else 401
         if access == "lan" and not config.SERVER_ALLOW_LAN:
@@ -958,12 +1029,7 @@ class AdeolaServer:
 
         return _json_response(404, {"error": "Not found"})
 
-    def start(self) -> None:
-        """Start the ThreadingHTTPServer on a background daemon thread."""
-        if self._httpd is not None:
-            return
-        if not self.token and client_access(self.host) != "loopback":
-            self.token = load_or_create_token()
+    def _build_handler(self):
         server_ref = self
 
         class _Handler(BaseHTTPRequestHandler):
@@ -1023,7 +1089,15 @@ class AdeolaServer:
                 if server_ref.verbose:
                     super().log_message(fmt, *args)
 
-        self._httpd = ThreadingHTTPServer((self.host, self.port), _Handler)
+        return _Handler
+
+    def start(self) -> None:
+        """Start the ThreadingHTTPServer on a background daemon thread."""
+        if self._httpd is not None:
+            return
+        if not self.token and client_access(self.host) != "loopback":
+            self.token = load_or_create_token()
+        self._httpd = ThreadingHTTPServer((self.host, self.port), self._build_handler())
         self._thread = threading.Thread(
             target=self._httpd.serve_forever, name="adeola-http", daemon=True
         )
