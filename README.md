@@ -198,13 +198,19 @@ identical call is dropped, and on a cloud brain private tool output stays local.
 
 A skill is a saved routine in `skills/<name>/SKILL.md`: front matter (`name`, `description`,
 `triggers`) plus the prompt to run. Two come with the project: `morning-brief` and `project-status`.
-Run them from the HUD's **Skills & Actions** buttons or with `POST /api/skills/run`.
-`GET /api/skills` also returns `suggested`: requests you've sent to the model at least twice, as
-candidates for new skills.
+There are three ways to run one:
+
+- Say or type one of its triggers exactly: `start my day`, `morning brief`, `project status`.
+  Triggers are checked before the instant commands, so don't reuse a phrase she already
+  understands (a test checks the shipped ones).
+- Ask for it by name: `run the morning brief skill`. An unknown name gets the list of skills.
+- Use the HUD's **Skills & Actions** buttons, or `POST /api/skills/run` with `{"name": "..."}`.
+
+Under the buttons, the HUD lists requests you've sent to the model more than once. Those are good
+candidates for a new skill. After adding or editing a `SKILL.md`, type `reload`.
 
 Skill output is saved as markdown in `data/outputs/`. Your vault stays read-only unless you set
-`ADEOLA_VAULT_OUT` to a folder (for example inside the vault) to write there instead. Saying a
-skill's trigger phrase out loud doesn't run it yet. For now skills run from the HUD or the API.
+`ADEOLA_VAULT_OUT` to a folder (for example inside the vault) to write there instead.
 
 ## HUD, Android & Tailscale (`--serve`)
 

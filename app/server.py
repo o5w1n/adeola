@@ -22,7 +22,7 @@ from app import config
 from app.brain.remote import RemoteBrain
 from app.brain.traces import TraceAnalyzer
 from app.events import BUS
-from app.skills.loader import discover_skills, save_vault_output, suggest_skills_from_traces
+from app.skills.loader import suggest_skills_from_traces
 
 _HUD_PATH = Path(__file__).resolve().parent / "ui" / "hud.html"
 _AVATAR_PATH = Path(__file__).resolve().parent.parent / "adeola-v1.avatar.json"
@@ -607,10 +607,10 @@ class AdeolaServer:
         if route == "/api/skills":
             tb = getattr(self.router, "toolbox", None)
             mem = tb.memory if tb else None
-            skills = [s.to_dict() for s in discover_skills()]
+            skills = [s.to_dict() for s in self.router.skills]   # the ones the router can actually run
             return _json_response(
                 200,
-                {"skills": skills, "suggested": suggest_skills_from_traces(mem)},
+                {"skills": skills, "suggested": suggest_skills_from_traces(mem, skills=self.router.skills)},
             )
 
         if route == "/api/notes":
@@ -933,22 +933,18 @@ class AdeolaServer:
             name = str(data.get("name") or "").strip()
             if not name:
                 return _json_response(400, {"error": "Missing 'name'"})
-            match = next((s for s in discover_skills() if s.name == name), None)
-            if match is None:
+            if self.router.find_skill(name) is None:
                 return _json_response(404, {"error": f"Unknown skill '{name}'"})
             with self.lock:
-                res = self.router.handle(match.prompt)
-            saved_path = None
-            if match.save_to_vault and res.reply:
-                saved_path = str(save_vault_output(match.name, res.reply))
+                res = self.router.run_skill(name)
             return _json_response(
                 200,
                 {
-                    "skill": match.name,
+                    "skill": res.skill,
                     "reply": res.reply,
                     "source": res.source,
                     "steps": res.steps,
-                    "saved_to": saved_path,
+                    "saved_to": res.saved_to or None,
                 },
             )
 

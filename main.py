@@ -16,6 +16,7 @@ from app.brain.model import Brain
 from app.brain.router import Router
 from app.memory.notes import NotesIndex
 from app.memory.store import Memory
+from app.skills.loader import discover_skills
 from app.tools.applications import AppIndex
 from app.tools.projects import Projects
 from app.tools.registry import SCHEMAS, Toolbox
@@ -198,9 +199,10 @@ def main() -> None:
             router.toolbox.apps = AppIndex()
             router.toolbox.projects.reload()
             router.notes.load()
+            router.skills = discover_skills()
             print(f"{N}: Re-indexed, {len(router.toolbox.apps.apps)} apps, "
-                  f"{len(router.toolbox.projects.all())} projects and "
-                  f"{len(router.notes.notes)} notes.")
+                  f"{len(router.toolbox.projects.all())} projects, "
+                  f"{len(router.notes.notes)} notes and {len(router.skills)} skills.")
             continue
         with lock:
             result = router.handle(text)

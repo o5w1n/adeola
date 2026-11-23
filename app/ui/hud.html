@@ -658,9 +658,25 @@
       border: 1px solid rgba(56, 189, 248, 0.3);
       flex-shrink: 0;
     }
+    .skills-suggested {
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 1px dashed var(--border-subtle);
+      font-size: 11.5px;
+      color: var(--dim);
+    }
+    .skills-suggested-title {
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+    .skills-suggested ul { margin: 0; padding-left: 16px; }
+    .skills-suggested li { margin: 2px 0; color: var(--text); }
+    .skills-suggested .count { color: var(--muted); margin-left: 6px; }
     .insight-tag.warning {
       background: rgba(248, 113, 113, 0.14);
-      color: #f87171;
+      color: var(--danger);
       border-color: rgba(248, 113, 113, 0.35);
     }
     .insight-mid {
@@ -935,6 +951,10 @@
         <span id="skills-count" style="color:var(--cyan)">0</span>
       </div>
       <div id="skills-buttons" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
+      <div id="skills-suggested" class="skills-suggested" hidden>
+        <div class="skills-suggested-title">Asked more than once. Worth a skill?</div>
+        <ul id="skills-suggested-list"></ul>
+      </div>
     </div>
 
     <div class="card grow">
@@ -1809,6 +1829,7 @@
           }
           if (d.type === "turn") {
             loadTelemetry();
+            loadSkills();   // keeps the "asked more than once" list current
           }
         } catch (_) {}
       };
@@ -1878,7 +1899,25 @@
           btn.onclick = () => runSkill(s.name);
           box.appendChild(btn);
         });
+        renderSuggestedSkills(data.suggested || []);
       } catch {}
+    }
+
+    // Commands sent to the model more than once: candidates for a SKILL.md. Plain text only.
+    function renderSuggestedSkills(suggested) {
+      const wrap = document.getElementById("skills-suggested");
+      const list = document.getElementById("skills-suggested-list");
+      list.replaceChildren();
+      suggested.forEach(item => {
+        const li = document.createElement("li");
+        li.textContent = item.command;
+        const count = document.createElement("span");
+        count.className = "count";
+        count.textContent = "×" + item.count;
+        li.appendChild(count);
+        list.appendChild(li);
+      });
+      wrap.hidden = suggested.length === 0;
     }
 
     async function runSkill(name) {
@@ -1893,6 +1932,7 @@
         const data = await res.json();
         if (box) box.textContent = data.reply || data.error || "Done.";
         loadTelemetry();
+        loadSkills();
       } catch {}
     }
 

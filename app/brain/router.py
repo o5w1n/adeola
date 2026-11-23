@@ -20,6 +20,7 @@ from app.brain.switching import BrainSwitching
 from app.brain.traces import TraceAnalyzer
 from app.events import BUS
 from app.memory.notes import NotesIndex, is_recency_query
+from app.skills.loader import RUN_SKILL_RE, Skill, discover_skills, save_vault_output, skill_key
 from app.tools.registry import OBSERVATION_TOOLS, Toolbox
 
 HELP_TEXT = ("I can open apps, websites and your projects, control music and volume, search the web, remember things "
@@ -186,6 +187,8 @@ class Result:
     brain: str = "fast"
     observations: list[tuple[str, dict, str]] = field(default_factory=list)
     confidence: float = 1.0
+    skill: str = ""          # name of the skill this turn ran, if any
+    saved_to: str = ""       # where the skill's output was saved, if it was
 
 
 def clean(text: str, keep_case: bool = False) -> str:
@@ -201,8 +204,10 @@ def clean(text: str, keep_case: bool = False) -> str:
 
 
 class Router(BrainSwitching):
-    def __init__(self, toolbox: Toolbox, brain=None, notes: NotesIndex | None = None, speaker=None):
+    def __init__(self, toolbox: Toolbox, brain=None, notes: NotesIndex | None = None, speaker=None,
+                 skills: list[Skill] | None = None):
         self.toolbox = toolbox
+        self.skills = discover_skills() if skills is None else skills
         self.brain = brain
         self._local_brain = brain
         self._remote_brains: dict[str, RemoteBrain] = {}
@@ -409,13 +414,20 @@ class Router(BrainSwitching):
         self._finish(raw, text, res, start)
         return res
 
-    def _special_route(self, raw: str, text: str) -> Result | None:
-        """Pending offers, notes questions, agent goals and the fast path. None means ask the model."""
+    def _special_route(self, raw: str, text: str, allow_skills: bool = True) -> Result | None:
+        """Pending offers, skills, notes questions, agent goals and the fast path.
+        None means ask the model. A skill's own prompt runs with allow_skills=False, so it can't loop."""
         # A pending "want me to remember that?" is answered by the very next command only.
         if self.toolbox.pending_offer is not None:
             if _KEEP.match(text) or _SKIP.match(text):
                 return Result(self.toolbox.answer_offer(keep=bool(_KEEP.match(text))), source="fast")
             self.toolbox.pending_offer = None
+        # Triggers come before the fast path: a phrase the user wrote into SKILL.md is explicit intent.
+        if allow_skills and (m := RUN_SKILL_RE.match(text)):
+            skill = self.find_skill(m.group(1))
+            return self._skill_turn(skill) if skill else Result(self._no_such_skill(m.group(1)))
+        if allow_skills and (skill := self._triggered_skill(text)):
+            return self._skill_turn(skill)
         if _RECENT_NOTES_Q.match(text):
             return self._notes_turn(raw, text, self.notes_for(text, min_score=1), recent=True)
         if m := _NOTES_Q.match(text):
@@ -470,6 +482,41 @@ class Router(BrainSwitching):
         if not hit_private:
             self.brain.remember(text, reply_text)
         return Result(reply_text, calls, source="notes", sources=sources)
+
+    def find_skill(self, name: str) -> Skill | None:
+        key = skill_key(name)
+        return next((s for s in self.skills if skill_key(s.name) == key), None)
+
+    def run_skill(self, name: str) -> Result:
+        """Run a skill by name as a full turn (traced and shown in the HUD), as if it were said aloud."""
+        return self.handle(f"run the {name} skill")
+
+    def _triggered_skill(self, text: str) -> Skill | None:
+        key = skill_key(text)
+        return next((s for s in self.skills if any(skill_key(t) == key for t in s.triggers)), None)
+
+    def _no_such_skill(self, name: str) -> str:
+        if not self.skills:
+            return f"I don't have a skill called {name}, and no skills are set up yet."
+        return (f"I don't have a skill called {name}. "
+                f"My skills are: {', '.join(s.name for s in self.skills)}.")
+
+    def _skill_turn(self, skill: Skill) -> Result:
+        """Run a skill's prompt like a command, then save its output if the skill asks for that."""
+        prompt = skill.prompt.strip()
+        text = clean(prompt)
+        if not text:
+            where = skill.path or f"skills/{skill.name}/SKILL.md"
+            return Result(f"The {skill.name} skill is empty. Add a prompt below the front matter in {where}.",
+                          source="none", skill=skill.name)
+        res = self._special_route(prompt, text, allow_skills=False) or self._model_turn(prompt, text)
+        res.skill = skill.name
+        if skill.save_to_vault and res.reply and res.source not in ("none", "error"):
+            try:
+                res.saved_to = str(save_vault_output(skill.name, res.reply))
+            except OSError as e:
+                self._warn("skill", f"Couldn't save the {skill.name} output ({e}).")
+        return res
 
     def _agent_turn(self, text: str, goal: str) -> Result:
         """Tier 3: a bounded multi-step tool loop for `agent:` / `research:` / `deep:` goals."""

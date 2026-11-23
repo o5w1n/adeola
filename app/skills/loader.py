@@ -118,15 +118,34 @@ def save_vault_output(title: str, content: str, out_dir: Path | None = None) -> 
         return path
 
 
-def suggest_skills_from_traces(memory, min_count: int = 2, limit: int = 5) -> list[dict]:
-    """Find repeated non-fast requests in SQLite traces ('done twice -> make a skill')."""
+RUN_SKILL_RE = re.compile(r"^(?:run|start|do)(?: (?:the|my))? (.+?) skill$")
+_NOT_SUGGESTIBLE_SOURCES = {"fast", "none", "error"}
+
+
+def skill_key(text: str) -> str:
+    """'Morning-Brief', 'morning brief' and 'morning_brief' all compare equal."""
+    return re.sub(r"[\s_-]+", " ", text.lower()).strip()
+
+
+def _runs_a_skill(text: str, trigger_keys: set[str]) -> bool:
+    return bool(RUN_SKILL_RE.match(text)) or skill_key(text) in trigger_keys
+
+
+def suggest_skills_from_traces(memory, min_count: int = 2, limit: int = 5,
+                               skills: list[Skill] | None = None) -> list[dict]:
+    """Find model requests made more than once ('done twice -> make a skill'). Instant commands,
+    failed turns and requests that already ran a skill don't count."""
     if memory is None or not hasattr(memory, "recent_traces"):
         return []
+    trigger_keys = {skill_key(t) for s in (skills or []) for t in s.triggers}
     try:
         counts: dict[str, int] = {}
         for t in memory.recent_traces(limit=200):
-            if getattr(t, "source", "") != "fast" and getattr(t, "clean_text", ""):
-                counts[t.clean_text] = counts.get(t.clean_text, 0) + 1
+            text = getattr(t, "clean_text", "")
+            if (not text or getattr(t, "source", "") in _NOT_SUGGESTIBLE_SOURCES
+                    or _runs_a_skill(text, trigger_keys)):
+                continue
+            counts[text] = counts.get(text, 0) + 1
         ranked = sorted(
             ((cmd, n) for cmd, n in counts.items() if n >= min_count),
             key=lambda x: x[1],
