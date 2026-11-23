@@ -35,7 +35,7 @@ Done: server LAN/token hardening (`c4746cb`), skill outputs off the vault (`9eb2
 
 Open, roughly in priority order:
 - [x] **5.1** Router split, no behaviour change (done 2026-11-22): brain/voice switching into `app/brain/switching.py`; one shared `_model_turn()` for the three near-duplicate decide → synthesize → remember paths in `handle()`. `tests/test_router.py` is the safety net.
-- [ ] **5.2** Tier 3 stops after the first tool (post-#2 eval: 3/6). On step 2 the model replies instead of calling the second tool ("time and my exam" → only `get_time`). Try a step-1 plan of the sub-questions, or restate the unanswered parts on step 2+. Measure before/after in the same sitting.
+- [x] **5.2** Tier 3 stops after the first tool (done 2026-11-23): added explicit Step 1 multi-tool planning prompt and stricter Step 2+ unanswered-part check in `app/brain/harness.py`. Same-sitting `qwen3:4b` Tier 3 eval went from 3/6 (`smart-5.2-before.json`) to 6/6 (`smart-5.2-after.json`), all finishing in 2 steps with 0 failures.
 - [ ] **5.3** T2 misses in the local eval: "capital of Ghana" → `web_search` instead of a chat answer; "when is my exam again?" and "which apps did you open today?" get a chat reply instead of `recall` / `recent_activity`; the dentist case gets no `offer_to_remember`. Prompt or fast-path work; do it after 5.1 so it doesn't collide with the split.
 - [ ] **5.4** Silent failures: `_maybe_auto_switch` and `_record_trace` in `router.py` swallow every exception. Emit a BUS event (and log under `-v`) so the HUD can show failed auto-switches.
 - [ ] **5.5** `AUTO_BRAIN = True` on a 6 GB GPU: time the smart ↔ coder swap in `tools/preflight.py` before keeping it on by default.

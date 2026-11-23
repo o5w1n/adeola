@@ -80,9 +80,13 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(res_dup.calls, [("get_time", {})])
         self.assertEqual(len(res_dup.observations), 1)
         self.assertEqual(res_dup.reply, "Synthesized 1 observation(s).")
+        step1_prompt = brain_dup.calls_seen[0][0]
+        self.assertIn("Step 1:", step1_prompt)
+        self.assertIn("ALL needed tools", step1_prompt)
         step2_prompt = brain_dup.calls_seen[1][0]
         self.assertIn("Already done: get_time()", step2_prompt)
         self.assertIn("Don't repeat these", step2_prompt)
+        self.assertIn("Check EVERY part", step2_prompt)
 
         # 2. Step 2 returning one duplicate and one fresh call runs only the fresh call
         brain_mixed = _StepBrain([

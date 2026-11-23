@@ -57,14 +57,20 @@ class AgentHarness:
         for step in range(1, self.max_steps + 1):
             steps = step
             if step == 1:
-                prompt = text
+                prompt = (
+                    f"{text}\n\n"
+                    '(Step 1: Identify every part of the request above and include ALL needed tools in '
+                    '"actions" (up to 3), including time/date, memory/recall, projects, or activity tools. '
+                    'Set "reply" to "".)'
+                )
             else:
                 done_list = ", ".join(_fmt_call(n, a) for n, a in all_calls)
                 prompt = (
                     f"{text}\n\n"
                     f"(Step {step}/{self.max_steps}: Already done: {done_list}. Don't repeat these. "
-                    "Use the tool observations above; call a different tool only if part of the request is "
-                    "still unanswered, otherwise give your final spoken reply with actions=[].)"
+                    "Check EVERY part of the user's request against the tool observations above: if ANY part "
+                    "still lacks a tool observation — never guess or use placeholders — call the missing tool(s) "
+                    'in "actions" now. Only when every part is answered, set "actions" to [] and give your final spoken reply.)'
                 )
             BUS.emit("harness", state="thinking", step=step, max_steps=self.max_steps)
             if observations:
